@@ -1,0 +1,28 @@
+let print: int;
+let print_range := λ(a: int, b)
+					if a <= b {
+						print(a);
+						if b >= a + 1 {
+							print(", ");
+							print(a + 1, b)
+						} else print("");
+					};
+
+let f := fn (a, b) {
+	a + b;
+};
+
+print_range(0,10);
+
+let max := λ(z: int, y: int){
+	if z < y {
+		y
+	} else {
+		z
+	};
+};
+
+let fx := λ(x: int){
+	!(x - - - - - - 2 * - 10e-2 + -4);
+	max(x, 1);
+};
