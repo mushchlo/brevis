@@ -33,7 +33,7 @@ struct Binary {
 
 #[derive(Clone, Debug)]
 struct IfElse {
-	cond: Box<AST>,
+	cond: Box<Expr>,
 	then: Box<AST>,
 	r#else: Option<Box<AST>>
 }
@@ -59,7 +59,7 @@ struct Variable {
 #[derive(Clone, Debug)]
 struct Call {
 	func: Box<AST>,
-	args: VecDeque<AST>
+	args: VecDeque<Expr>
 }
 
 #[derive(Clone, Debug)]
@@ -74,25 +74,21 @@ enum Type {
 	Int,
 	Float,
 	Str,
+	Bool,
 
 /*
 	Union(Vec<Aggregate>),
 	Struct(Vec<Aggregate>),*/
 
-	TypeConstructor((TConstructorVariant, Vec<Type>)),
+	TypeConstructor(TConstructor),
 
 	TypeVar(u16)
 }
 
 #[derive(Clone, Debug)]
 struct TConstructor {
-	name: TConstructorVariant,
+	name: &'static str,
 	args: Vec<Type>
-}
-
-#[derive(Clone, Debug)]
-enum TConstructorVariant {
-	Fn
 }
 
 /*

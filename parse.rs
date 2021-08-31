@@ -4,9 +4,10 @@ use crate::AST::*;
 use crate::ExprVal::*;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
+use std::collections::HashMap;
 
 lazy_static! {
-	static ref TYPE_DICT: Mutex<Vec<(&'static str, Type)>> = Mutex::new(vec![]);
+	static ref TYPE_DICT: Mutex<HashMap<&'static str, Type>> = Mutex::new(HashMap::new());
 	static ref DECLARED_VARS: Mutex<Vec<(Variable, i16)>> = Mutex::new(vec![]);
 	static ref TYPE_VAR_COUNTER: Mutex<u16> = Mutex::new(0);
 }
@@ -327,9 +328,8 @@ fn match_type(tok: TokenValue) -> Type {
 			},
 		Ident(id)	=>
 			match TYPE_DICT.lock().unwrap()
-							.iter()
-							.find(|d| d.0 == id) {
-								Some((_, t)) => t.clone(),
+							.get(&*id) {
+								Some(t) => t.clone(),
 								_	=> panic!("identifier {} does not represent a type, but was used in place of one", id)
 			},
 		_	=> panic!("expected type, received {:?}", tok)

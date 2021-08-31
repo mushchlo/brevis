@@ -2,10 +2,19 @@ use std::collections::HashMap;
 
 lazy_static! {
 	static ref SUBSTITUTIONS: Mutex<HashMap<u16, Type>> = Mutex::new(HashMap::new());
+	static ref TYPE_CONSTRAINTS: Mutex<Vec<(Type, Type)>> = Mutex::new();
 }
 
 fn substitution() -> &mut HashMap<u16, Type> {
 	SUBSTITUTIONS.lock().unwrap()
+}
+
+fn addConstraint(t1: Type, t2: Type) {
+	TYPE_CONSTRAINTS.lock().unwrap().push((t1, t2));
+}
+
+fn constraints() -> Vec<(Type, Type)> {
+	TYPE_CONSTRAINTS.lock().unwrap()
 }
 
 fn unify(t1: Type, t2: Type) {
@@ -49,3 +58,54 @@ fn occursIn(index: u16, t: Type) -> bool {
 		_ => panic!("attempted a weird occursIn with type {:#?}", t)
 	};
 }
+
+
+fn inferType(ast: AST, env: HashMap<Variable, Type>) -> Type {
+	match expr {
+			LetNode(_) =>
+				Void,
+			ExprNode(e) => match e {
+				LiteralNode(TokenLiteral(lit)) =>
+					match lit {
+						StrLit(_) => Str,
+						IntLit(_) => Int,
+						FltLit(_) => Flt,
+						BoolLit(_) => Bool
+					},
+
+				BlockNode(b) =>
+					match b.back() {
+						None => Void,
+						Some(*line) => inferType(line,  env)
+					},
+
+				IfNode(IfElse { then: a1, r#else: a2, ... }) =>
+					let t1 = inferType(a1, env);
+					let t2 = inferType(a2, env);
+					assert!(t1 == t2);
+					return t1;
+				},
+
+				IdentNode(v) => env.get(v),
+
+				LambdaNode(l) => TypeConstructor(TConstructor {
+					name: "Function" + l.args.len(), 
+					args: l.args.push_back(inferType(*l.body, env))
+				}),
+
+				CallNode(c) => {
+					let t1 = inferType(CallNode(c), env);
+					let argTypes = c.args.iter()
+									.for_each(|t| infer_type(t, env))
+									.collect::<VecDeque<Type>>();
+					let returnType = get_type_var();
+
+					addConstraint(t1, TypeConstructor(TConstructor {
+						name: format!("Function{}", argTypes.len()),
+						args: argTypes
+								.push_back(returnType)
+								.iter()
+								.collect::<Vec<Type>>()
+					}));
+					returnType
+				},
