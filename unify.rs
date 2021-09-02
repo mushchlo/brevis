@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use crate::Type::*;
 
 lazy_static! {
 	static ref SUBSTITUTIONS: Mutex<HashMap<u16, Type>> = Mutex::new(HashMap::new());
 	static ref TYPE_CONSTRAINTS: Mutex<Vec<(Type, Type)>> = Mutex::new();
 }
 
-fn substitution() -> &mut HashMap<u16, Type> {
-	SUBSTITUTIONS.lock().unwrap()
+fn substitution() -> &'static mut HashMap<u16, Type> {
+	&mut SUBSTITUTIONS.lock().unwrap()
 }
 
 fn addConstraint(t1: Type, t2: Type) {
@@ -14,31 +14,31 @@ fn addConstraint(t1: Type, t2: Type) {
 }
 
 fn constraints() -> Vec<(Type, Type)> {
-	TYPE_CONSTRAINTS.lock().unwrap()
+	TYPE_CONSTRAINTS.lock().unwrap().to_vec()
 }
 
 fn unify(t1: Type, t2: Type) {
 	match (t1, t2) {
-		(TypeConstructor((v1, args1)), TypeConstructor((v2, args2))) => {
+		(TypeConstructor(TConstructor { name: v1, args: args1 }), TypeConstructor(TConstructor { name: v2, args: args2 })) => {
 			assert!(v1 == v2);
 			assert!(args1.len() == args2.len());
-			for (t3, t4) in args1.iter().zip(args2.iter()) {
+			for (&t3, &t4) in args1.iter().zip(args2.iter()) {
 				unify(t3, t4);
 			}
 		},
 
 		(TypeVar(i), TypeVar(j)) if i == j => {},
-		(TypeVar(i), _) if substitution().contains_key(i) =>
+		(TypeVar(i), _) if substitution().contains_key(&i) =>
 			unify(substitution[i], t2),
-		(_, TypeVar(j)) if substitution().contains_key(j) =>
+		(_, TypeVar(j)) if substitution().contains_key(&j) =>
 			unify(t1, substitution()[j]),
 
 		(TypeVar(i), _) => {
-			assert!(!occursIn(i, t2)),
+			assert!(!occursIn(i, t2));
 			substitution().insert(i, t2)
 		},
 		(_, TypeVar(j)) => {
-			assert!(!occursIn(j, t2)),
+			assert!(!occursIn(j, t2));
 			substitution().insert(j, t2)
 		},
 
@@ -52,7 +52,7 @@ fn occursIn(index: u16, t: Type) -> bool {
 			occursIn(index, substitution()[i]),
 		TypeVar(i) =>
 			i == index,
-		TConstructor((_, args)) =>
+		TypeConstructor((_, args)) =>
 			args.iter().any(|t1| occursIn(index, t1)),
 
 		_ => panic!("attempted a weird occursIn with type {:#?}", t)
@@ -61,51 +61,54 @@ fn occursIn(index: u16, t: Type) -> bool {
 
 
 fn inferType(ast: AST, env: HashMap<Variable, Type>) -> Type {
-	match expr {
-			LetNode(_) =>
+	match ast {
+		LetNode(_) =>
 				Void,
-			ExprNode(e) => match e {
-				LiteralNode(TokenLiteral(lit)) =>
-					match lit {
-						StrLit(_) => Str,
-						IntLit(_) => Int,
-						FltLit(_) => Flt,
-						BoolLit(_) => Bool
-					},
-
-				BlockNode(b) =>
-					match b.back() {
-						None => Void,
-						Some(*line) => inferType(line,  env)
-					},
-
-				IfNode(IfElse { then: a1, r#else: a2, ... }) =>
-					let t1 = inferType(a1, env);
-					let t2 = inferType(a2, env);
-					assert!(t1 == t2);
-					return t1;
+		ExprNode(e) => match e {
+			LiteralNode(lit) =>
+				match lit {
+					StrLit(_) => Type::Str,
+					IntLit(_) => Type::Int,
+					FltLit(_) => Type::Flt,
+					BoolLit(_) => Type::Bool
 				},
 
-				IdentNode(v) => env.get(v),
+			BlockNode(b) =>
+				match b.back() {
+					None => Void,
+					Some(line) => inferType(*line,  env)
+				},
 
-				LambdaNode(l) => TypeConstructor(TConstructor {
-					name: "Function" + l.args.len(), 
-					args: l.args.push_back(inferType(*l.body, env))
-				}),
+			IfNode(IfElse { then: a1, r#else: a2, .. }) => {
+				let t1 = inferType(a1, env);
+				let t2 = inferType(a2, env);
+				assert!(t1 == t2);
+				return t1;
+			},
 
-				CallNode(c) => {
-					let t1 = inferType(CallNode(c), env);
-					let argTypes = c.args.iter()
-									.for_each(|t| infer_type(t, env))
+			IdentNode(v) => env.get(v),
+
+			LambdaNode(l) => TypeConstructor(TConstructor {
+				name: "Function" + l.args.len(), 
+				args: l.args.push_back(inferType(*l.body, env))
+			}),
+
+			CallNode(c) => {
+				let t1 = inferType(CallNode(c), env);
+				let argTypes = c.args.iter()
+									.for_each(|t| inferType(t, env))
 									.collect::<VecDeque<Type>>();
-					let returnType = get_type_var();
+				let returnType = get_type_var();
 
-					addConstraint(t1, TypeConstructor(TConstructor {
-						name: format!("Function{}", argTypes.len()),
-						args: argTypes
-								.push_back(returnType)
-								.iter()
-								.collect::<Vec<Type>>()
-					}));
-					returnType
-				},
+				addConstraint(t1, TypeConstructor(TConstructor {
+					name: format!("Function{}", argTypes.len()),
+					args: argTypes
+							.push_back(returnType)
+							.iter()
+							.collect::<Vec<Type>>()
+				}));
+				returnType
+			},
+		}
+	}
+}

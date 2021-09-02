@@ -27,15 +27,15 @@ enum ExprVal {
 #[derive(Clone, Debug)]
 struct Binary {
 	op: OpID,
-	left: Box<AST>,
-	right: Box<AST>
+	left: Box<Expr>,
+	right: Box<Expr>
 }
 
 #[derive(Clone, Debug)]
 struct IfElse {
 	cond: Box<Expr>,
-	then: Box<AST>,
-	r#else: Option<Box<AST>>
+	then: Box<Expr>,
+	r#else: Option<Box<Expr>>
 }
 
 #[derive(Clone, Debug)]
@@ -58,14 +58,14 @@ struct Variable {
 
 #[derive(Clone, Debug)]
 struct Call {
-	func: Box<AST>,
+	func: Box<Expr>,
 	args: VecDeque<Expr>
 }
 
 #[derive(Clone, Debug)]
 struct Let {
 	var: Variable,
-	def: Option<Box<AST>>
+	def: Option<Box<Expr>>
 }
 
 #[derive(Clone, Debug)]
