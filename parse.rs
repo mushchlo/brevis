@@ -297,7 +297,7 @@ impl TokenStream {
 				},
 				_ => return new_expr_ast(UnaryNode(Unary {
 						op: op,
-						expr: Box::new(self.parse_atom())
+						expr: Box::new(self.parse_atom().expect_expr())
 					}))
 			}
 		}

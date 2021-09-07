@@ -41,7 +41,7 @@ struct IfElse {
 #[derive(Clone, Debug)]
 struct Unary {
 	op: OpID,
-	expr: Box<AST>
+	expr: Box<Expr>
 }
 
 #[derive(Clone, Debug)]
@@ -87,7 +87,7 @@ enum Type {
 
 #[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash)]
 struct TConstructor {
-	name: &'static str,
+	name: String,
 	args: Vec<Type>
 }
 
