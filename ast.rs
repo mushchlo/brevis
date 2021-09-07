@@ -50,7 +50,7 @@ struct Lambda {
 	body: Box<AST>
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash)]
 struct Variable {
 	name: String,
 	r#type: Type
@@ -68,7 +68,7 @@ struct Let {
 	def: Option<Box<Expr>>
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash)]
 enum Type {
 	Void,
 	Int,
@@ -85,7 +85,7 @@ enum Type {
 	TypeVar(u16)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash)]
 struct TConstructor {
 	name: &'static str,
 	args: Vec<Type>
