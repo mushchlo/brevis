@@ -8,6 +8,8 @@ include!("unify.rs");
 fn main() {
 	let contents = fs::read_to_string("test.gl").expect("failed to open/read file");
 	let mut lexed = lex(contents);
+	let mut parsed = lexed.parse();
+	parsed.annotate();
 
-	println!("{:#?}", lexed.parse());
+	println!("{:#?}", parsed);
 }
