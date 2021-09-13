@@ -8,8 +8,36 @@ use std::collections::HashMap;
 
 lazy_static! {
 	static ref TYPE_DICT: Mutex<HashMap<&'static str, Type>> = Mutex::new(HashMap::new());
-	static ref DECLARED_VARS: Mutex<Vec<(Variable, i16)>> = Mutex::new(vec![]);
+//	static ref DECLARED_VARS: Mutex<Vec<(Variable, i16)>> = Mutex::new(vec![]);
 	static ref TYPE_VAR_COUNTER: Mutex<u16> = Mutex::new(0);
+
+	static ref VAR_TYPES: Mutex<Vec<HashMap<String, Type>>> = Mutex::new(vec![HashMap::new()]);
+}
+
+fn type_of(id: &str) -> Option<Type> {
+	let var_types = VAR_TYPES.lock().unwrap().to_vec();
+	for map in var_types {
+		if map.contains_key(id) {
+			return map.get(id).cloned();
+		}
+	}
+
+	return None;
+}
+
+fn var_types_insert(key: String, value: Type) {
+	let mut var_types = VAR_TYPES.lock().unwrap();
+	var_types.last_mut().unwrap().insert(key, value);
+}
+
+fn var_types_new_stack() {
+	let mut var_types = VAR_TYPES.lock().unwrap();
+	var_types.push(HashMap::new());
+}
+
+fn var_types_pop_stack() {
+	let mut var_types = VAR_TYPES.lock().unwrap();
+	var_types.pop();
 }
 
 impl AST {
@@ -43,7 +71,7 @@ impl TokenStream {
 		self.next();
 	}
 
-	fn parse(&mut self) -> AST {
+	fn parse(&mut self) -> Expr {
 		let mut parsed = VecDeque::<Box<AST>>::new();
 
 		while let Some(_) = self.peek() {
@@ -51,7 +79,10 @@ impl TokenStream {
 			self.skip_token(Punc(';'));
 		}
 
-		new_expr_ast(BlockNode(parsed))
+		Expr {
+			val: BlockNode(parsed),
+			r#type: Void
+		}
 	}
 	
 	fn parse_node(&mut self) -> AST {
@@ -142,7 +173,7 @@ impl TokenStream {
 
 	fn parse_let(&mut self) -> AST {
 		self.skip_token(KeyWord(KeyWord::Let));
-		let parsed_var = self.declare_var(None);
+		let parsed_var = self.declare_var();
 		let parsed_def = if let Some(Token { val: AssignOp(Eq), .. }) = self.peek() {
 			self.skip_token(AssignOp(Eq));
 			Some(Box::new(self.parse_expr()))
@@ -150,7 +181,7 @@ impl TokenStream {
 			None
 		};
 		
-		DECLARED_VARS.lock().unwrap().push((parsed_var.clone(), 0));
+		var_types_insert(parsed_var.name.clone(), parsed_var.r#type.clone());
 		return LetNode(Let {
 			var: parsed_var,
 			def: parsed_def
@@ -186,27 +217,21 @@ impl TokenStream {
 		parsed
 	}
 
-	fn declare_var(&mut self, initial_scope: Option<i16>) -> Variable {
+	fn declare_var(&mut self) -> Variable {
 		if let Some(Token { val: Ident(id), start: pos, .. }) = self.next() {
-			if matches!(type_of(&id), Some(_)) {		/* making sure declared var does not already exist */
+			if let Some(_) = type_of(&id) {		/* making sure declared var does not already exist */
 				panic!("variable {} was already declared, but was declared again at {}", id, pos);
 			}
 			let var_type = match self.peek() {
 				Some(Token { val: Punc(':'), .. }) => {
 					self.skip_token(Punc(':'));
-					if let Some(Token { val: t, .. }) = self.next() {
-						match_type(t)
-					} else {
-						panic!("expected a type at {}, found EOF", pos);
-					}
+					self.parse_type()
 				},
 				_	=> get_type_var()
 			};
 			let var = Variable { name: id, r#type: var_type };
 
-			if let Some(scope) = initial_scope {
-				DECLARED_VARS.lock().unwrap().push((var.clone(), scope));
-			}
+			var_types_insert(var.name.clone(), var.r#type.clone());
 
 			return var
 		}
@@ -240,15 +265,11 @@ impl TokenStream {
 	}
 
 	fn parse_block(&mut self) -> AST {
-		for (_, d) in DECLARED_VARS.lock().unwrap().iter_mut() {
-			*d += 1;
-		}
+println!("entering block");
+		var_types_new_stack();
 		let parsed = self.delimited(Punc('{'), Punc('}'), Punc(';'),
 							|s| Box::new(ExprNode(s.parse_expr())));
-		for (_, d) in DECLARED_VARS.lock().unwrap().iter_mut() {
-			*d -= 1;
-		}
-		filter_if(&mut DECLARED_VARS.lock().unwrap(), |(_, d)| *d < 0);
+		var_types_pop_stack();
 
 		match parsed.len() {
 			0 => panic!("empty block :/"),
@@ -260,7 +281,7 @@ impl TokenStream {
 	fn parse_lambda(&mut self) -> AST {
 		self.skip_token(KeyWord(KeyWord::λ));
 		new_expr_ast(LambdaNode(Lambda {
-			args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var(Some(-1))),
+			args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
 			body: Box::new(ExprNode(self.parse_expr()))
 		}))
 	}
@@ -303,6 +324,42 @@ impl TokenStream {
 		}
 		panic!("Operator {:?} is not a unary", op);
 	}
+
+	fn parse_type(&mut self) -> Type {
+		match self.next() {
+			Some(tok) => match tok.val {
+				KeyWord(kw)	=>
+					match kw {
+						KeyWord::Int		=> Type::Int,
+						KeyWord::Float		=> Type::Float,
+						KeyWord::String		=> Type::Str,
+						KeyWord::λ			=> {
+							let mut arg_types = self.delimited(Punc('('), Punc(')'), Punc(','),
+								|s| s.parse_type());
+							let mut return_types = self.delimited(Punc('('), Punc(')'), Punc(','),
+								|s| s.parse_type());
+							Type::TypeConstructor(TConstructor {
+								name: format!("Function{}", arg_types.len()),
+								args: {
+									arg_types.append(&mut return_types);
+									Vec::from(arg_types)
+								}
+							})
+						},
+						_		=> panic!("Keyword {:?} does not represent a type, but was used in place of one", kw)
+					},
+				Ident(id)	=>
+					match TYPE_DICT.lock().unwrap()
+									.get(&*id) {
+										Some(t) => t.clone(),
+										_	=> panic!("identifier {} does not represent a type, but was used in place of one", id)
+					},
+				non_type	=> panic!("expected type, received {:?}", non_type)
+			},
+	
+			None => panic!("expected a type, received EOF")
+		}
+	}
 }
 
 fn precedence(id: OpID) -> i8 {
@@ -324,38 +381,26 @@ fn precedence(id: OpID) -> i8 {
 	}
 }
 
-fn match_type(tok: TokenValue) -> Type {
-	match tok {
-		KeyWord(kw)	=>
-			match kw {
-				KeyWord::Int		=> Type::Int,
-				KeyWord::Float		=> Type::Float,
-				KeyWord::String		=> Type::Str,
-				_		=> panic!("Keyword {:?} does not represent a type, but was used in place of one", kw)
-			},
-		Ident(id)	=>
-			match TYPE_DICT.lock().unwrap()
-							.get(&*id) {
-								Some(t) => t.clone(),
-								_	=> panic!("identifier {} does not represent a type, but was used in place of one", id)
-			},
-		_	=> panic!("expected type, received {:?}", tok)
-	}
-}
-
 fn get_type_var() -> Type {
 	let type_var = *TYPE_VAR_COUNTER.lock().unwrap();
 	*TYPE_VAR_COUNTER.lock().unwrap() += 1;
 	return Type::TypeVar(type_var)
 }
-
+/*
 fn type_of(id: &str) -> Option<Type> {
-	return Some(DECLARED_VARS.lock().unwrap()
+	let declared_vars = DECLARED_VARS.lock().unwrap();
+	if let None = declared_vars
+					.iter()
+					.find(|(Variable { name: n, .. }, _)| n == id) {
+		println!("declared_vars looks like this: {:#?}", declared_vars);
+	}
+
+	return Some(declared_vars
 					.iter()
 					.find(|(Variable { name: n, .. }, _)| *n == id)?
 					.0.r#type
 					.clone());
-}
+}*/
 
 fn filter_if<T, F>(v: &mut Vec<T>, pred: F)
 	where F: Fn(&T) -> bool
