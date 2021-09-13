@@ -182,7 +182,8 @@ impl TokenStream {
 		self.skip_token(KeyWord(KeyWord::Let));
 		let parsed_var = self.declare_var();
 		let parsed_def = if let Some(Token {
-			val: AssignOp(Eq), ..
+			val: AssignOp(Eq),
+			..
 		}) = self.peek()
 		{
 			self.skip_token(AssignOp(Eq));
@@ -191,7 +192,6 @@ impl TokenStream {
 			None
 		};
 
-		var_types_insert(parsed_var.name.clone(), parsed_var.r#type.clone());
 		LetNode(Let {
 			var: parsed_var,
 			def: parsed_def,
@@ -314,6 +314,7 @@ impl TokenStream {
 		let parsed = self.delimited(Punc('{'), Punc('}'), Punc(';'), |s| {
 			Box::new(ExprNode(s.parse_expr()))
 		});
+println!("exiting block, var_types is {:#?} before pop", VAR_TYPES.lock().unwrap().to_vec());
 		var_types_pop_stack();
 
 		match parsed.len() {
@@ -324,11 +325,16 @@ impl TokenStream {
 	}
 
 	fn parse_lambda(&mut self) -> AST {
+println!("entering lambda");
 		self.skip_token(KeyWord(KeyWord::λ));
-		new_expr_ast(LambdaNode(Lambda {
-			args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
-			body: Box::new(ExprNode(self.parse_expr())),
-		}))
+		var_types_new_stack();
+		let lambda_expr = new_expr_ast(LambdaNode(Lambda {
+				args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
+				body: Box::new(ExprNode(self.parse_expr())),
+			}));
+println!("exiting lambda, var_types is {:#?} before pop", VAR_TYPES.lock().unwrap().to_vec());
+		var_types_pop_stack();
+		lambda_expr
 	}
 
 	fn parse_call(&mut self, f: Expr) -> AST {
@@ -390,8 +396,11 @@ impl TokenStream {
 							self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.parse_type());
 						let mut return_types =
 							self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.parse_type());
+						if return_types.is_empty() {
+							return_types.push_front(Void);
+						}
 						Type::TypeConstructor(TConstructor {
-							name: format!("Function{}", arg_types.len()),
+							name: format!("Function"),
 							args: {
 								arg_types.append(&mut return_types);
 								Vec::from(arg_types)

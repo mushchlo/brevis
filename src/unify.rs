@@ -85,38 +85,57 @@ pub fn unify(t1: Type, t2: Type) {
 				args: args2,
 			}),
 		) => {
-			assert!(v1 == v2);
-			assert!(args1.len() == args2.len());
-			for (t3, t4) in args1.into_iter().zip(args2.into_iter()) {
+println!("unify1");
+			if v1 != v2 {
+				panic!("Type constructor {:#?} is not the same as type constructor {:#?}, but was attempted to be unified with it", v1, v2);
+			}
+			if args1.len() != args2.len() {
+				panic!("type constructors with unequal lengths are attempting to be unified, {:#?} and {:#?}", t1, t2);
+			}
+			for (t3, t4) in args1.clone().into_iter().zip(args2.clone().into_iter()) {
 				unify(t3, t4);
 			}
+println!("leaving unify1");
 		}
 
-		(TypeVar(i), TypeVar(j)) if i == j => {}
+		(TypeVar(i), TypeVar(j)) if i == j => {
+println!("unify2");}
 		(TypeVar(i), _) if substitution!().contains_key(&i) => {
+println!("unify3");
 			unify(substitution!()[&i].clone(), t2)
 		}
 		(_, TypeVar(j)) if substitution!().contains_key(&j) => {
+println!("unify4");
 			unify(t1, substitution!()[&j].clone())
 		}
 
 		(TypeVar(i), _) => {
+println!("unify5");
 			assert!(!occurs_in(i, t2.clone()));
+println!("inserting into substitute");
 			substitution!().insert(i, t2);
+println!("leaving unify5");
 		}
 		(_, TypeVar(j)) => {
+println!("unify6");
 			assert!(!occurs_in(j, t1.clone()));
 			substitution!().insert(j, t1);
+println!("leaving unify6");
 		}
 
-		_ => panic!(
+		_ => {
+println!("unify7");
+		println!(
 			"attempted a weird unification between {:#?} and {:#?}",
 			t1, t2
-		),
+		)
+		}
 	}
+	println!("LEAVING UNIFY");
 }
 
 fn occurs_in(index: u16, t: Type) -> bool {
+println!("in occurs_in, t is {:#?}", t);
 	return match t {
 		TypeVar(i) if substitution!().contains_key(&i) => {
 			occurs_in(index, substitution!()[&i].clone())
@@ -125,7 +144,8 @@ fn occurs_in(index: u16, t: Type) -> bool {
 		TypeConstructor(TConstructor { args: a, .. }) => {
 			a.iter().any(|t1| occurs_in(index, (*t1).clone()))
 		}
-		Void | Int | Float | Str | Bool => false,
+		Void | Int | Float | Str | Bool =>{
+		println!("exiting"); false}
 	};
 }
 
@@ -147,20 +167,20 @@ fn infer_type(a: AST) -> Type {
 					TokenLiteral::FltLit(_) => Type::Float,
 					TokenLiteral::BoolLit(_) => Type::Bool
 				}, ExprVal::UnaryNode(u) => {
-				let t = infer_type(AST::ExprNode(*u.expr));
-				match u.op {
+					let t = infer_type(AST::ExprNode(*u.expr));
+				/*match u.op {
 					OpID::Not => assert!(t == Bool),
 					OpID::Minus => assert!(t == Int || t == Float),
 					_ => panic!("operator {:?} was attempted to be unified as a unary expression, but is not a unary operator (should never happen)", u.op)
-				}
-				t
-			}, ExprVal::BinaryNode(b) => {
-				let (t_left, t_right) = (infer_type(AST::ExprNode(*b.left)), infer_type(AST::ExprNode(*b.right)));
-				// assert!(t_left == t_right);
-				add_constraint(t_left.clone(), t_right);
-				/* TODO: typechecking for binaries should be dependent on what the op is, FIX THIS */
-				t_left
-			},
+				}*/
+					return t
+				}, ExprVal::BinaryNode(b) => {
+					let (t_left, t_right) = (infer_type(AST::ExprNode(*b.left)), infer_type(AST::ExprNode(*b.right)));
+					// assert!(t_left == t_right);
+					add_constraint(t_left.clone(), t_right);
+					/* TODO: typechecking for binaries should be dependent on what the op is, FIX THIS */
+					t_left
+				},
 				
 	
 			ExprVal::BlockNode(b) => {
@@ -170,12 +190,14 @@ fn infer_type(a: AST) -> Type {
 					println!("line is {:#?}", *boxed_line);
 					infer_type((**boxed_line).clone());
 				}
-				println!("popping stack bc block end");
-				env_pop_stack();
-				match b.back() {
+				let block_val_t = match b.back() {
 					Some(line) => infer_type((**line).clone()),
 					_ => Void
-				}
+				};
+				println!("popping stack bc block end");
+				env_pop_stack();
+				
+				return block_val_t;
 			},
 	
 			ExprVal::IfNode(i) => {
@@ -198,12 +220,12 @@ fn infer_type(a: AST) -> Type {
 			ExprVal::LambdaNode(l) => {
 				println!("entering fn, new stack");
 				env_new_stack();
-				for arg in &l.args {
+				for arg in l.args.iter() {
 					env_insert(arg.name.clone(), arg.r#type.clone());
 				}
 
 				let fn_type = TypeConstructor(TConstructor {	
-						name: format!("Function{}", l.args.len()), 
+						name: format!("Function"), 
 						args: {
 								let mut tmp = l.args.iter()
 												.map(|v| v.r#type.clone())
@@ -232,7 +254,7 @@ fn infer_type(a: AST) -> Type {
 				let return_type = get_type_var();
 	
 				add_constraint(t1, TypeConstructor(TConstructor {
-					name: format!("Function{}", arg_types.len()),
+					name: format!("Function"),
 					args: {
 							let mut tmp = arg_types.into_iter()
 								.collect::<Vec<Type>>();
@@ -247,10 +269,12 @@ fn infer_type(a: AST) -> Type {
 }
 
 fn solve_constraints() {
+println!("constraints are {:#?}", constraints!());
 	for (t1, t2) in constraints!() {
 		unify(t1, t2);
-		constraints!().clear();
 	}
+	constraints!().clear();
+println!("leaving solve_constraints");
 }
 
 fn substitute(t: Type) -> Type {
