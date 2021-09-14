@@ -172,7 +172,13 @@ impl TokenStream {
 				s.skip_token(Literal(l.clone()));
 				new_expr_ast(LiteralNode(l))
 			}
-			Ident(_) => new_expr_ast(IdentNode(s.parse_var())),
+			Ident(_) => {
+				let id = s.parse_id();
+				ExprNode(Expr {
+					val: IdentNode(id.clone()),
+					r#type: type_of(&id).unwrap()
+				})
+			}
 			UnaryOp(u) => s.parse_unary(u),
 			_ => panic!("unexpected token {:?}", s.peek().unwrap()),
 		})
@@ -267,20 +273,18 @@ impl TokenStream {
 		panic!("expected identifier for declared variable, found EOF");
 	}
 
-	fn parse_var(&mut self) -> Variable {
+	fn parse_id(&mut self) -> String {
 		if let Some(Token {
 			val: Ident(id),
 			start: pos,
 			..
 		}) = self.next()
 		{
-			if let Some(t) = type_of(&id) {
-				return Variable {
-					name: id,
-					r#type: t,
-				};
+			if type_of(&id).is_some() {
+				return id;
+			} else {
+				panic!("identifier {} at {} was used before declaration", id, pos);
 			}
-			panic!("identifier {} at {} was used before declaration", id, pos);
 		}
 		panic!(
 			"expected identifier of a declared variable at {}",
@@ -309,12 +313,10 @@ impl TokenStream {
 	}
 
 	fn parse_block(&mut self) -> AST {
-		println!("entering block");
 		var_types_new_stack();
 		let parsed = self.delimited(Punc('{'), Punc('}'), Punc(';'), |s| {
 			Box::new(ExprNode(s.parse_expr()))
 		});
-println!("exiting block, var_types is {:#?} before pop", VAR_TYPES.lock().unwrap().to_vec());
 		var_types_pop_stack();
 
 		match parsed.len() {
@@ -325,14 +327,12 @@ println!("exiting block, var_types is {:#?} before pop", VAR_TYPES.lock().unwrap
 	}
 
 	fn parse_lambda(&mut self) -> AST {
-println!("entering lambda");
 		self.skip_token(KeyWord(KeyWord::λ));
 		var_types_new_stack();
 		let lambda_expr = new_expr_ast(LambdaNode(Lambda {
 				args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
 				body: Box::new(ExprNode(self.parse_expr())),
 			}));
-println!("exiting lambda, var_types is {:#?} before pop", VAR_TYPES.lock().unwrap().to_vec());
 		var_types_pop_stack();
 		lambda_expr
 	}
@@ -400,7 +400,7 @@ println!("exiting lambda, var_types is {:#?} before pop", VAR_TYPES.lock().unwra
 							return_types.push_front(Void);
 						}
 						Type::TypeConstructor(TConstructor {
-							name: format!("Function"),
+							name: "Function".to_string(),
 							args: {
 								arg_types.append(&mut return_types);
 								Vec::from(arg_types)
@@ -449,35 +449,6 @@ pub fn get_type_var() -> Type {
 	let type_var = *TYPE_VAR_COUNTER.lock().unwrap();
 	*TYPE_VAR_COUNTER.lock().unwrap() += 1;
 	Type::TypeVar(type_var)
-}
-// fn type_of(id: &str) -> Option<Type> {
-// let declared_vars = DECLARED_VARS.lock().unwrap();
-// if let None = declared_vars
-// .iter()
-// .find(|(Variable { name: n, .. }, _)| n == id) {
-// println!("declared_vars looks like this: {:#?}", declared_vars);
-// }
-//
-// return Some(declared_vars
-// .iter()
-// .find(|(Variable { name: n, .. }, _)| *n == id)?
-// .0.r#type
-// .clone());
-// }
-
-#[allow(dead_code)]
-fn filter_if<T, F>(v: &mut Vec<T>, pred: F)
-where
-	F: Fn(&T) -> bool,
-{
-	let mut i = 0;
-	while i < v.len() {
-		if pred(&v[i]) {
-			v.remove(i);
-		} else {
-			i += 1
-		}
-	}
 }
 
 fn new_expr_ast(value: ExprVal) -> AST {

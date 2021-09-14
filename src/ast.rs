@@ -18,7 +18,7 @@ pub struct Expr {
 pub enum ExprVal {
 	LiteralNode(TokenLiteral),
 
-	IdentNode(Variable),
+	IdentNode(String),
 	BlockNode(VecDeque<Box<AST>>),
 	LambdaNode(Lambda),
 	IfNode(IfElse),
@@ -92,12 +92,6 @@ pub struct TConstructor {
 	pub name: String,
 	pub args: Vec<Type>,
 }
-
-// #[derive(Clone, Debug)]
-// struct Aggregate {
-// tag: String,
-// valtype: Box<Type>
-// }
 
 #[derive(Clone, Debug)]
 pub struct FuncType {
