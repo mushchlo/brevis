@@ -1,13 +1,11 @@
-//! Currently, this file cannot be formatted (by rustfmt) because of the commented macros
-
 use std::collections::HashMap;
 
 use crate::{
 	ast::{Expr, ExprVal, Let, TConstructor, Type, Type::*, AST},
 	lex::TokenLiteral,
-	parse::get_type_var
+	parse::get_type_var,
+	tok::binary_op_result_type
 };
-
 
 struct Inference {
 	env: Vec<HashMap<String, Type>>,
@@ -78,12 +76,10 @@ impl Inference {
 				self.substitutions.insert(j, t1);
 			}
 	
-			_ => {
-			println!(
-				"attempted a weird unification between {:#?} and {:#?}",
-				t1, t2
-			)
-			}
+			_ =>
+				if t1 != t2 {
+					panic!("unified concrete types are not equal {:#?} != {:#?}", t1, t2)
+				}
 		}
 	}
 
@@ -123,12 +119,12 @@ impl Inference {
 							self.infer_type(AST::ExprNode(*u.expr))
 						}, ExprVal::BinaryNode(b) => {
 							let (t_left, t_right) = (self.infer_type(AST::ExprNode(*b.left.clone())), self.infer_type(AST::ExprNode(*b.right.clone())));
-							self.constraints.push((t_left.clone(), b.left.r#type));
-							self.constraints.push((t_right.clone(), b.right.r#type));
+							self.constraints.push((t_left.clone(), b.left.r#type.clone()));
+							self.constraints.push((t_right.clone(), b.right.r#type.clone()));
 	
-							self.constraints.push((t_left.clone(), t_right));
-							/* TODO: typechecking for binaries should be dependent on what the op is, FIX THIS */
-							t_left
+							/* TODO: constraints should not assume binaries only apply to symmetric operand types */
+							self.constraints.push((t_left.clone(), t_right.clone()));
+							binary_op_result_type(b.op, t_left, t_right)
 						},
 						
 			
@@ -173,7 +169,7 @@ impl Inference {
 	
 						let (return_type, body_type) =
 							if let AST::ExprNode(e) = *l.body {
-									(self.infer_type(AST::ExprNode(e.clone())), e.r#type.clone())
+									(self.infer_type(AST::ExprNode(e.clone())), e.r#type)
 							} else {
 									(Void, Void)
 							};
@@ -181,15 +177,15 @@ impl Inference {
 						self.constraints.push((return_type.clone(), body_type));
 		
 						let fn_type = TypeConstructor(TConstructor {	
-								name: "Function".to_string(), 
-								args: {
-										let mut tmp = l.args.iter()
-														.map(|v| v.r#type.clone())
-														.collect::<Vec<Type>>();
-										tmp.push(return_type);
-										tmp
-								}
-							});
+							name: "Function".to_string(), 
+							args: {
+								let mut tmp = l.args.iter()
+												.map(|v| v.r#type.clone())
+												.collect::<Vec<Type>>();
+								tmp.push(return_type);
+								tmp
+							}
+					 	});
 		
 						self.env.pop();
 		
@@ -222,9 +218,7 @@ impl Inference {
 	}
 
 	fn solve_constraints(&mut self) {
-	println!("constraints are {:#?}", self.constraints);
 		for (t1, t2) in self.constraints.clone() {
-	println!("toplevel unify of {:#?} and {:#?}", t1, t2);
 			self.unify(t1, t2);
 		}
 		self.constraints.clear();
@@ -234,10 +228,11 @@ impl Inference {
 	fn substitute(&mut self, t: Type) -> Type {
 		match t {
 			TypeVar(n) if self.substitutions.contains_key(&n) =>
-										self.substitutions
-											.get(&n)
-											.unwrap_or_else(|| panic!("No substitution available for variable {}, substitutions is {:#?}", n, self.substitutions))
-											.clone(),
+										self.substitute(self.substitutions
+															.get(&n)
+															.unwrap_or_else(|| panic!("No substitution available for variable {}, substitutions is {:#?}", n, self.substitutions))
+															.clone()),
+			TypeVar(n) => panic!("AAAAA no substitution for {:#?} AAAAAA", n),
 			TypeConstructor(tc) => TypeConstructor(TConstructor {
 				name: tc.name,
 				args: tc
@@ -254,11 +249,15 @@ impl Inference {
 
 impl Expr {
 	fn annotate_helper(&mut self, inference: &mut Inference) {
-		self.r#type = inference.substitute(self.clone().r#type);
+		if let TypeVar(10) = self.r#type { println!("GOT A 10 FOR EXPR {:#?}, SUBSTITUTION IS {:#?}", self, inference.substitute(TypeVar(10)));
+		self.r#type = inference.substitute(self.r#type.clone());
+		println!("substituted typevar 10 is {:#?}", self.r#type);
+		} else { self.r#type = inference.substitute(self.r#type.clone()); }
 		match self.val {
 			ExprVal::LiteralNode(_) | ExprVal::IdentNode(_) => {}
+
 			ExprVal::BlockNode(ref mut b) => {
-				for line in &mut b.into_iter() {
+				for line in b.iter_mut() {
 					line.annotate_helper(inference);
 				}
 			}
@@ -273,7 +272,7 @@ impl Expr {
 			ExprVal::IfNode(ref mut i) => {
 				i.cond.annotate_helper(inference);
 				i.then.annotate_helper(inference);
-				if let Some(mut else_branch) = i.clone().r#else {
+				if let Some(ref mut else_branch) = i.r#else {
 					else_branch.annotate_helper(inference);
 				}
 			}
@@ -293,8 +292,6 @@ impl Expr {
 			ExprVal::UnaryNode(ref mut u) => {
 				u.expr.annotate_helper(inference);
 			}
-
-			_ => panic!("annotating this thing, {:#?}, is not yet supported", self.val),
 		}
 	}
 
@@ -305,11 +302,9 @@ impl Expr {
 		self.r#type = inference.infer_type(AST::ExprNode(self.clone()));
 
 		println!("solving constraints");
-
 		inference.solve_constraints();
 
 		println!("annotating types");
-
 		self.annotate_helper(&mut inference);
 
 		println!("substitutions is {:#?}", inference.substitutions)
@@ -321,9 +316,12 @@ impl AST {
 		match self {
 			AST::ExprNode(e) => e.annotate_helper(inference),
 			AST::LetNode(Let {
-				def: Some(expr), ..
-			}) => expr.annotate_helper(inference),
-
+				var: v,
+				def: Some(expr)
+			}) => {
+				v.r#type = inference.substitute(v.r#type.clone());
+				expr.annotate_helper(inference);
+			}
 			_ => {}
 		}
 	}

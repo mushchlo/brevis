@@ -8,7 +8,7 @@ pub enum OpID {
 	Minus,
 
 	// mathematical operators
-	Add,
+	Add, // Int, Int => Int / Flt, Flt => Flt
 	Sub,
 	Mul,
 	Div,
@@ -28,7 +28,6 @@ use OpID::*;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum KeyWord {
-	Return,
 	Let,
 	If,
 	Else,
@@ -42,7 +41,6 @@ pub enum KeyWord {
 }
 
 pub const KEYWORD_DICT: &[(KeyWord, &str)] = &[
-	(KeyWord::Return, "return"),
 	(KeyWord::Let, "let"),
 	(KeyWord::If, "if"),
 	(KeyWord::Else, "else"),
@@ -67,3 +65,14 @@ pub const BINARY_OP_DICT: &[(OpID, &str)] = &[
 	(Doeq, "=="),
 	(Noteq, "!="),
 ];
+
+use crate::ast::Type;
+
+pub fn binary_op_result_type(op: OpID, t_left: Type, t_right: Type) -> Type {
+	match op {
+		Add | Sub | Mul | Div => t_left,
+		Doeq | Noteq | Gt | Lt | Gteq | Lteq | And | Or | Xor => Type::Bool,
+
+		_ => panic!("Operator {:?} does not apply to types {:#?} and {:#?}", op, t_left, t_right)
+	}
+}
