@@ -1,13 +1,14 @@
-let print: λ(int)();
+let print: λ(string)();
+let itoa: λ(int)(string);
 let print_range := λ(a: int, b)
 					if a <= b {
-						print(a);
+						print(itoa(a));
 						if b >= a + 1 {
 							print(", ");
 						} else print("");
 					};
 
-let f := fn (a, b) {
+let f := fn (a: int, b) {
 	a + b;
 };
 
@@ -21,6 +22,6 @@ let max := λ(z: int, y: int)
 	};
 
 let fx := λ(x: int){
-	!(x - - - - - - 2 * - 10e-2 + -4);
+	!(x - - - - - - 2 * -4);
 	max(x, 1);
 };
