@@ -51,7 +51,7 @@ pub struct Unary {
 #[derive(Clone, Debug)]
 pub struct Lambda {
 	pub args: VecDeque<Variable>,
-	pub body: Box<AST>,
+	pub body: Box<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash)]

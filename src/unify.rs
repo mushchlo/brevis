@@ -167,12 +167,8 @@ impl Inference {
 							self.env_insert(arg.name.clone(), arg.r#type.clone());
 						}
 	
-						let (return_type, body_type) =
-							if let AST::ExprNode(e) = *l.body {
-									(self.infer_type(AST::ExprNode(e.clone())), e.r#type)
-							} else {
-									(Void, Void)
-							};
+						let (return_type, body_type) = (self.infer_type(AST::ExprNode(*l.body.clone())),
+															l.body.r#type.clone());
 	
 						self.constraints.push((return_type.clone(), body_type));
 		

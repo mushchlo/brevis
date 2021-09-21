@@ -331,7 +331,7 @@ impl TokenStream {
 		var_types_new_stack();
 		let lambda_expr = new_expr_ast(LambdaNode(Lambda {
 				args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
-				body: Box::new(ExprNode(self.parse_expr())),
+				body: Box::new(self.parse_expr()),
 			}));
 		var_types_pop_stack();
 		lambda_expr
