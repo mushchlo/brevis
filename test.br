@@ -21,7 +21,5 @@ let max := λ(z: int, y: int)
 		z
 	};
 
-let fx := λ(x: int){
-	!(x - - - - - - 2 * -4);
-	max(x, 1);
-};
+let fx := λ(x: int)
+	max(x - - - - - - 2 * -4, 1);
