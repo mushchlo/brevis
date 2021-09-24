@@ -3,7 +3,7 @@
 
 use crate::{
 	lex::lex,
-	anf::{ANFTransformer},
+	anf::anfify_expr,
 };
 use std::fs;
 
@@ -21,7 +21,6 @@ fn main() {
 	let mut parsed = lexed.parse();
 	parsed.annotate();
 
-	let mut trans = ANFTransformer::new();
-	let parsed_anf = trans.anfify_expr(parsed);
+	let parsed_anf = anfify_expr(parsed);
 	println!("{:#?}", parsed_anf);
 }
