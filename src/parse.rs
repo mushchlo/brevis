@@ -315,7 +315,7 @@ impl TokenStream {
 	fn parse_block(&mut self) -> AST {
 		var_types_new_stack();
 		let parsed = self.delimited(Punc('{'), Punc('}'), Punc(';'), |s| {
-			Box::new(ExprNode(s.parse_expr()))
+			Box::new(s.parse_node())
 		});
 		var_types_pop_stack();
 
