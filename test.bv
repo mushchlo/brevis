@@ -14,12 +14,16 @@ let f := fn (a: int, b) {
 
 print_range(0,10);
 
-let max := λ(z: int, y: int)
-	if z < y {
+let max := λ(z: int, y: int) {
+	let ret := 2;
+	if {true; 3; z < y} {
 		y
 	} else {
 		z
 	};
+
+	ret
+};
 
 let fx := {3;
 	λ(x: int)
