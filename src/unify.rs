@@ -139,7 +139,7 @@ impl Inference {
 						};
 						self.env.pop();
 						
-						return block_val_t;
+						block_val_t
 					},
 			
 					ExprVal::IfNode(i) => {
@@ -228,7 +228,7 @@ impl Inference {
 															.get(&n)
 															.unwrap_or_else(|| panic!("No substitution available for variable {}, substitutions is {:#?}", n, self.substitutions))
 															.clone()),
-			TypeVar(n) => panic!("AAAAA no substitution for {:#?} AAAAAA", n),
+			TypeVar(n) => panic!("AAAAA no substitution for {} AAAAAA substitutions is {:#?}", n, self.substitutions),
 			TypeConstructor(tc) => TypeConstructor(TConstructor {
 				name: tc.name,
 				args: tc

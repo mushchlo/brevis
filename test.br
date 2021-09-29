@@ -5,11 +5,11 @@ let print_range := λ(a: int, b)
 						print(itoa(a));
 						if b >= a + 1 {
 							print(", ");
-						} else print("");
+						} else print("\n");
 					};
 
 let f := fn (a: int, b) {
-	a + b;
+	{4; {3; 2; {1; a + b}}};
 };
 
 print_range(0,10);
@@ -21,5 +21,7 @@ let max := λ(z: int, y: int)
 		z
 	};
 
-let fx := λ(x: int)
-	max(x - - - - - - 2 * -4, 1);
+let fx := {3;
+	λ(x: int)
+	max(x - - - - - - 2 * -4, 1)
+};
