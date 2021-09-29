@@ -127,7 +127,7 @@ impl Inference {
 							binary_op_result_type(b.op, t_left, t_right)
 						},
 						
-			
+
 					ExprVal::BlockNode(b) => {
 						self.env.push(HashMap::new());
 						for boxed_line in b.range(..b.len() - 1) {
@@ -138,10 +138,10 @@ impl Inference {
 							_ => Void
 						};
 						self.env.pop();
-						
+
 						block_val_t
 					},
-			
+
 					ExprVal::IfNode(i) => {
 						let if_t = self.infer_type(AST::ExprNode(*i.then.clone()));
 						let cond_t = self.infer_type(AST::ExprNode(*i.cond.clone()));
@@ -152,10 +152,10 @@ impl Inference {
 						self.constraints.push((if_t.clone(), i.then.r#type.clone()));
 						self.constraints.push((cond_t.clone(), i.cond.r#type.clone()));
 						self.constraints.push((cond_t, Type::Bool));
-			
+
 						if_t
 					},
-			
+
 					ExprVal::IdentNode(v) => self.env_find(v.clone())
 													.unwrap_or_else(|| panic!("unable to find variable {:#?} in the environment when inferring types, env looks like {:#?}",
 																v,
@@ -166,12 +166,12 @@ impl Inference {
 						for arg in l.args.iter() {
 							self.env_insert(arg.name.clone(), arg.r#type.clone());
 						}
-	
+
 						let (return_type, body_type) = (self.infer_type(AST::ExprNode(*l.body.clone())),
 															l.body.r#type.clone());
-	
+
 						self.constraints.push((return_type.clone(), body_type));
-		
+
 						let fn_type = TypeConstructor(TConstructor {	
 							name: "Function".to_string(), 
 							args: {
@@ -182,23 +182,23 @@ impl Inference {
 								tmp
 							}
 					 	});
-		
+
 						self.env.pop();
-		
+
 						fn_type
 					},
-			
+
 					ExprVal::CallNode(c) => {
 						let t1 = self.infer_type(AST::ExprNode(*c.func.clone()));
 						self.constraints.push((t1.clone(), c.func.r#type.clone()));
-	
+
 						let mut arg_types = c.args.iter()
 											.map(|t| self.infer_type(AST::ExprNode((*t).clone())))
 											.into_iter()
 											.collect::<Vec<Type>>();
 						let return_type = get_type_var();
 						arg_types.push(return_type.clone());
-	
+
 						self.constraints.push((t1, TypeConstructor(TConstructor {
 							name: "Function".to_string(),
 							args: arg_types
