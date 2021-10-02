@@ -45,7 +45,7 @@ lazy_static! {
 		};
 }
 
-pub const core_fns_9: &str =
+pub const CORE_FNS_9: &str =
 r#"#include <u.h>
 #include <libc.h>
 
@@ -57,14 +57,14 @@ _itoa(vlong val)
 	smprint("%lld", val);
 }"#;
 
-pub const core_fns_posix: &str =
+pub const CORE_FNS_POSIX: &str =
 r#"#include <stdio.h>
 #include <stdlib.h>
 
-void _print(char* s){ print("%s", s); }
+void _print(char* s){ printf("%s", s); }
 
 char*
-itoa(long long int val)
+_itoa(long long int val)
 {
 	static char buf[32] = {0};
 	int i = 30;
@@ -185,7 +185,7 @@ impl Compilation {
 													}
 												})
 												.reduce(|acc, next|
-															acc.clone() + if acc.is_empty() { ", " } else { "" } + &next)
+															acc.clone() + if !acc.is_empty() { ", " } else { "" } + &next)
 												.unwrap()
 							),
 
