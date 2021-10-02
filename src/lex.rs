@@ -277,7 +277,7 @@ fn un_escape(str: String) -> String {
 }
 
 fn is_op_char(c: char) -> bool {
-	"+-*/:=!~<>".contains(&c.to_string())
+	"+-*/:=!~<>%".contains(&c.to_string())
 }
 
 fn is_punc_char(c: char) -> bool {

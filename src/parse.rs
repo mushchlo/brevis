@@ -438,9 +438,9 @@ fn precedence(id: OpID) -> i8 {
 
 		Gt | Lt | Gteq | Lteq | Doeq | Noteq => 7,
 
-		Add | Sub => 10,
+		Add | Sub | Concat => 10,
 
-		Mul | Div => 20,
+		Mul | Div | Mod => 20,
 
 		_ => panic!("operator {:?} has no precedence, but it was requested", id),
 	}

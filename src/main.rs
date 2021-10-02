@@ -5,11 +5,10 @@
 use crate::{
 	lex::lex,
 	anf::anfify_expr,
-	optimize::reduce_blocks_expr,
 	codegen::{
 		Compilation,
-		core_fns_9,
-		core_fns_posix,
+		CORE_FNS_9,
+		CORE_FNS_POSIX,
 	},
 };
 use std::{
@@ -24,14 +23,13 @@ mod parse;
 mod tok;
 mod unify;
 mod anf;
-mod optimize;
 mod codegen;
 
 fn main() {
 	let core_libs = if env::args().any(|s| s == "-9") {
-		core_fns_9
+		CORE_FNS_9
 	} else {
-		core_fns_posix
+		CORE_FNS_POSIX
 	};
 
 	let contents = fs::read_to_string("test.bv").expect("failed to open/read file");

@@ -3,8 +3,9 @@ let itoa: λ(int)(string);
 let print_range := λ(a: int, b)
 					if a <= b {
 						print(itoa(a));
-						if b >= a + 1 {
+						if a + 1 <= b {
 							print(", ");
+							print_range(a + 1, b)
 						} else print("\n");
 					};
 
@@ -12,7 +13,24 @@ let f := fn (a: int, b) {
 	{4; {3; 2; {1; a + b}}};
 };
 
+let fizzbuzz := fn (n: int) {
+	if n > 0 {
+		fizzbuzz(n - 1)
+	};
+
+	if n % 3 == 0 and n % 5 == 0{
+		print("Fizzbuzz\n")
+	} else if n % 3 == 0 {
+		print("Fizz\n")
+	} else if n % 5 == 0 {
+		print("Buzz\n")
+	} else {
+		print(itoa(n) ~ "\n")
+	}
+};
+
 print_range(0,10);
+fizzbuzz(100);
 
 let max := λ(z: int, y: int) {
 	let ret := 2;
