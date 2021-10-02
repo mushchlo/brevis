@@ -13,6 +13,7 @@ name = "genlang_rust"
 version = "0.0.1"
 dependencies = [
  "lazy_static",
+ "maplit",
  "peeking_take_while",
  "rand",
 ]
@@ -39,6 +40,12 @@ name = "libc"
 version = "0.2.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2a5ac8f984bfcf3a823267e5fde638acc3325f6496633a5da6bb6eb2171e103"
+
+[[package]]
+name = "maplit"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e2e65a1a2e43cfcb47a895c4c8b10d1f4a61097f9f254f183aee60cad9c651d"
 
 [[package]]
 name = "peeking_take_while"
