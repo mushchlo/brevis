@@ -131,10 +131,11 @@ impl TokenStream {
 
 				if curr_prec > prev_prec {
 					self.next();
-					let atom = self.parse_expr();
+					let tmp = self.parse_atom().expect_expr();
+					let right_expr = self.maybe_binary(tmp, curr_prec);
 					let parsed = new_expr(BinaryNode(Binary {
 						left: Box::new(left_expr),
-						right: Box::new(self.maybe_binary(atom, curr_prec)),
+						right: Box::new(right_expr),
 						op: curr_op,
 					}));
 
