@@ -109,11 +109,11 @@ impl CharsPos<'_> {
 
 		self.skip_char('"');
 		let strlit = self.make_token(|s| {
-			TokenValue::Literal(TokenLiteral::StrLit(un_escape(s.read_lit(|&ch| {
+			TokenValue::Literal(TokenLiteral::StrLit(s.read_lit(|&ch| {
 				let cont = ch != '"' || escaped;
 				escaped = !escaped && ch == '\\';
 				cont
-			}))))
+			})))
 		});
 		self.skip_char('"');
 		strlit
