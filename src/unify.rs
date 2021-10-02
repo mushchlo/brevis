@@ -90,7 +90,7 @@ impl Inference {
 			}
 			TypeVar(i) => i == index,
 			TypeConstructor(TConstructor { args: a, .. }) => {
-				a.into_iter().any(|t1|{ println!("running sub_occursin"); self.occurs_in(index, t1)})
+				a.into_iter().any(|t1| self.occurs_in(index, t1))
 			}
 			Void | Int | Float | Str | Bool => false
 		}
@@ -218,10 +218,9 @@ impl Inference {
 			self.unify(t1, t2);
 		}
 		self.constraints.clear();
-	println!("leaving solve_constraints");
 	}
 
-	fn substitute(&mut self, t: Type) -> Type {
+	fn substitute(&self, t: Type) -> Type {
 		match t {
 			TypeVar(n) if self.substitutions.contains_key(&n) =>
 										self.substitute(self.substitutions
@@ -245,10 +244,7 @@ impl Inference {
 
 impl Expr {
 	fn annotate_helper(&mut self, inference: &mut Inference) {
-		if let TypeVar(10) = self.r#type { println!("GOT A 10 FOR EXPR {:#?}, SUBSTITUTION IS {:#?}", self, inference.substitute(TypeVar(10)));
 		self.r#type = inference.substitute(self.r#type.clone());
-		println!("substituted typevar 10 is {:#?}", self.r#type);
-		} else { self.r#type = inference.substitute(self.r#type.clone()); }
 		match self.val {
 			ExprVal::LiteralNode(_) | ExprVal::IdentNode(_) => {}
 
@@ -292,18 +288,12 @@ impl Expr {
 	}
 
 	pub fn annotate(&mut self) {
-		println!("inferring types");
-
 		let mut inference = Inference::new();
 		self.r#type = inference.infer_type(AST::ExprNode(self.clone()));
 
-		println!("solving constraints");
 		inference.solve_constraints();
 
-		println!("annotating types");
 		self.annotate_helper(&mut inference);
-
-		println!("substitutions is {:#?}", inference.substitutions)
 	}
 }
 
