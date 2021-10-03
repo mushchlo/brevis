@@ -4,7 +4,8 @@ use crate::{
 	ast::{Expr, ExprVal, Let, TConstructor, Type, Type::*, AST},
 	lex::TokenLiteral,
 	parse::get_type_var,
-	tok::binary_op_result_type
+	tok::binary_op_result_type,
+	core::core_vals,
 };
 
 struct Inference {
@@ -16,7 +17,7 @@ struct Inference {
 impl Inference {
 	fn new() -> Self {
 		Inference {
-			env: vec![],
+			env: vec![core_vals()],
 			constraints: vec![],
 			substitutions: HashMap::new()
 		}

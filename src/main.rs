@@ -5,8 +5,8 @@
 use crate::{
 	lex::lex,
 	anf::anfify_expr,
-	codegen::{
-		Compilation,
+	codegen::Compilation,
+	core::{
 		CORE_FNS_9,
 		CORE_FNS_POSIX,
 	},
@@ -24,6 +24,7 @@ mod tok;
 mod unify;
 mod anf;
 mod codegen;
+mod core;
 
 fn main() {
 	let core_libs = if env::args().any(|s| s == "-9") {

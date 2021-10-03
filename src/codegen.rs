@@ -46,61 +46,6 @@ lazy_static! {
 		};
 }
 
-pub const CORE_FNS_9: &str =
-r#"#include <u.h>
-#include <libc.h>
-
-void _print(char* s){ print("%s", s); }
-
-char*
-_itoa(vlong val)
-{
-	smprint("%lld", val);
-}
-
-char*
-concat(char* s1, char* s2)
-{
-	smprint("%s%s", s1, s2);
-}"#;
-
-pub const CORE_FNS_POSIX: &str =
-r#"#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-void _print(char* s){ printf("%s", s); }
-
-char*
-_itoa(long long int val)
-{
-	static char buf[32] = {0};
-	int i = 30;
-
-	if(val == 0){
-		strcpy(buf, "0");
-		return buf;
-	}
-	for(; val && i; --i, val /= 10)
-		buf[i] = "0123456789"[val % 10];
-
-	return &buf[i+1];
-}
-char*
-concat(const char *s1, const char *s2)
-{
-	size_t len1,len2;
-	char *result = malloc((len1 = strlen(s1)) + (len2 = strlen(s2)) + 1);
-
-	if(result){
-		memcpy(result, s1, len1);
-		memcpy(result + len1, s2, len2 + 1);
-	}
-	return result;
-}
-
-"#;
-
 fn lambda_name() -> String {
 	format!("lambda_{}", LAMBDA_COUNTER.fetch_add(1, Ordering::SeqCst))
 }
@@ -126,7 +71,7 @@ impl Compilation {
 						TypeConstructor(mut tc) if tc.name == "Function" => {
 							let ret_t = tc.args.pop().unwrap();
 							let args_t = tc.args.iter()
-												.map(|t| compile_type(t.clone()))
+												.map(|t| compile_type_name(t.clone(), None))
 												.reduce(|acc, next| acc + ", " + &next)
 												.unwrap_or("".to_string());
 							if let Some(box ANFExpr {
@@ -137,13 +82,13 @@ impl Compilation {
 								return "".to_string();
 							}
 							format!("{} (*{})({})",
-								compile_type(ret_t),
+								compile_type_name(ret_t, None),
 								mk_id(l.var.name.clone()),
 								args_t
 							)
 						}
 
-						t => format!("{} {}", compile_type(t), mk_id(l.var.name.clone()))
+						t => format!("{} {}", compile_type_name(t, None), mk_id(l.var.name.clone()))
 					};
 				let def_str =
 					if let Some(box expr) = l.def {
@@ -167,7 +112,7 @@ impl Compilation {
 		
 		let return_t = l.body.r#type.clone();
 		let args_str = l.args.iter()
-							.map(|v| compile_type(v.r#type.clone()) + " " + &mk_id(v.name.clone()))
+							.map(|v| compile_type_name(v.r#type.clone(), Some(mk_id(v.name.clone()))))
 							.reduce(|acc, next| acc + ", " + &next)
 							.unwrap_or_else(|| "void".to_string());
 		if name.is_empty() {
@@ -178,7 +123,7 @@ impl Compilation {
 		let declarations = self.fn_context.pop();
 		self.global +=
 			&format!("{}\n{}({})\n{{\n{}{}{};\n}}\n",
-				compile_type(return_t.clone()),
+				compile_type_name(return_t.clone(), None),
 				name,
 				args_str,
 				declarations.unwrap(),
@@ -288,15 +233,30 @@ fn compile_trivial(tr: Trivial) -> String {
 	}
 }
 
-fn compile_type(t: Type) -> String {
-	match t {
-		Void => "void",
-		Int => "long long int",
-		Float => "long double",
-		Str => "char*",
-		Bool => "char",
-		_ => panic!("aaaa i cant make type {:#?}", t)
-	}.to_string()
+fn compile_type_name(t: Type, name: Option<String>) -> String {
+	format!("{}{}",
+		match t {
+			Void => "void",
+			Int => "long long int",
+			Float => "long double",
+			Str => "char*",
+			Bool => "char",
+			TypeConstructor(mut tc) if tc.name == "Function" => {
+				let ret_t = tc.args.pop().unwrap();
+				return format!("{} (*{})({})",
+					compile_type_name(ret_t, None),
+					if name.is_some() { name.unwrap() } else { "".to_string() },
+					tc.args.into_iter()
+						.map(|t| compile_type_name(t, None))
+						.reduce(|acc, next| acc + ", " + &next)
+						.unwrap_or_else(|| "void".to_string())
+				);
+			}
+			_ => panic!("aaaa i cant make type {:#?}", t)
+		}.to_string(),
+	
+		if name.is_some() { " ".to_string() + &name.unwrap() } else { "".to_string() }
+	)
 }
 
 fn mk_id(s: String) -> String {

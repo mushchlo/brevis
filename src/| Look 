@@ -21,9 +21,8 @@ lazy_static! {
 
 	static ref VAR_TYPES: Mutex<Vec<HashMap<String, Type>>> =
 		Mutex::new(vec![
-			core_vals(),
-			HashMap::new()
-		]);
+			
+			HashMap::new()]);
 }
 
 fn type_of(id: &str) -> Option<Type> {
