@@ -1,7 +1,5 @@
 extern crate maplit;
-extern crate lazy_static;
 
-use lazy_static::lazy_static;
 use maplit::hashmap;
 use std::collections::HashMap;
 use crate::ast::{
