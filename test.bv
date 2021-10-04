@@ -7,24 +7,26 @@ let print_range := λ(a: int, b)
 						} else print("\n");
 					};
 
-let fizzbuzz := fn (n) {
-	if n > 0 {
-		fizzbuzz(n - 1)
-	};
-
-	if n % 3 == 0 and n % 5 == 0{
-		print("Fizzbuzz\n")
-	} else if n % 3 == 0 {
-		print("Fizz\n")
-	} else if n % 5 == 0 {
-		print("Buzz\n")
+let fizzbuzz := fn (n, accumulator) {
+	accumulator :=
+		(if n % 3 == 0 and n % 5 == 0 {
+			"Fizzbuzz\n"
+		} else if n % 3 == 0 {
+			"Fizz\n"
+		} else if n % 5 == 0 {
+			"Buzz\n"
+		} else {
+			itoa(n) ~ "\n"
+		}) ~ accumulator;
+	if n == 0 {
+		accumulator
 	} else {
-		print(itoa(n) ~ "\n")
+		fizzbuzz(n - 1, accumulator);
 	}
 };
 
 print_range(0,10);
-fizzbuzz(100);
+print(fizzbuzz(100, ""));
 
 let max := λ(z: int, y: int) {
 	let ret := 2;
@@ -38,12 +40,12 @@ let max := λ(z: int, y: int) {
 };
 
 let fx := {3;
-	λ(x: int)
-	max(x - - - - - - 2 * -4, 1)
+	fn(x)
+		max(x - - - - - - 2 * -4, 1)
 };
 
 let apply := fn (f, x) {
 	f(x)
 };
 
-print(apply(fn(x){ "5" }, 3));
+apply(fn(x) print(itoa(x)), 3);
