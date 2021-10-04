@@ -76,7 +76,7 @@ use crate::ast::Type;
 
 pub fn binary_op_result_type(op: OpID, t_left: Type, t_right: Type) -> Type {
 	match op {
-		Add | Sub | Mul | Div | Mod | Concat => t_left,
+		Eq | Add | Sub | Mul | Div | Mod | Concat => t_left,
 		Doeq | Noteq | Gt | Lt | Gteq | Lteq | And | Or | Xor => Type::Bool,
 
 		_ => panic!("Operator {:?} does not apply to types {:#?} and {:#?}", op, t_left, t_right)
