@@ -1,11 +1,11 @@
 let print_range := λ(a: int, b)
-					if a <= b {
-						print(itoa(a));
-						if a + 1 <= b {
-							print(", ");
-							print_range(a + 1, b);
-						} else print("\n");
-					};
+	if a <= b {
+		print(itoa(a));
+		if a + 1 <= b {
+			print(", ");
+			print_range(a + 1, b);
+		} else print("\n");
+	};
 
 let fizzbuzz := fn (n, accumulator) {
 	accumulator :=
