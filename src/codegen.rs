@@ -73,7 +73,7 @@ impl Compilation {
 							let args_t = tc.args.iter()
 												.map(|t| compile_type_name(t.clone(), None))
 												.reduce(|acc, next| acc + ", " + &next)
-												.unwrap_or("".to_string());
+												.unwrap_or_else(|| "".to_string());
 							if let Some(box ANFExpr {
 								val: LambdaNode(lambda),
 								..
@@ -148,7 +148,7 @@ impl Compilation {
 			BlockNode(b) => format!("({})", b.iter()
 												.filter_map(|box l| {
 													let res = self.compile(l.clone());
-													if res.clone().trim().is_empty() {
+													if res.trim().is_empty() {
 														None
 													} else {
 														Some(res)

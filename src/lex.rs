@@ -252,6 +252,7 @@ where
 	Some(dict.into_iter().find(|t| t.1 == matcher)?.0)
 }
 
+/*
 fn un_escape(str: String) -> String {
 	let mut last_backslash = false;
 	let mut unescaped: Vec<char> = Vec::new();
@@ -274,7 +275,7 @@ fn un_escape(str: String) -> String {
 	}
 
 	unescaped.into_iter().collect()
-}
+}*/
 
 fn is_op_char(c: char) -> bool {
 	"+-*/:=!~<>%".contains(&c.to_string())

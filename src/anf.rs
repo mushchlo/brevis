@@ -97,7 +97,7 @@ pub fn anfify(a: AST) -> ANFAST {
 			ANFAST::LetNode(ANFLet {
 				var: l.var.clone(),
 				def:
-					if let Some(box def) = l.def.clone() {
+					if let Some(box def) = l.def {
 						Some(box anfify_expr(def))
 					}  else { None }
 			}),
