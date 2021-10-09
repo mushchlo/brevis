@@ -1,5 +1,3 @@
-extern crate rand;
-
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::{

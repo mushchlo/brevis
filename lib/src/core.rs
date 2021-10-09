@@ -22,6 +22,19 @@ pub fn core_vals() -> HashMap<String, Type> {
 	}
 }
 
+pub const CORE_FNS_JS: &str =
+r#"var buffered = "";
+function _print(s) {
+	buffered += String(s);
+}
+var _itoa = String;
+"#;
+
+pub const CORE_FNS_PY: &str =
+r#"_print = lambda s: print(s, end="")
+_itoa = lambda i: str(i)
+"#;
+
 pub const CORE_FNS_9: &str =
 r#"#include <u.h>
 #include <libc.h>

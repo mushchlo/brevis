@@ -1,0 +1,17 @@
+[package]
+name = "brevis-lib"
+version = "0.0.1"
+
+[lib]
+name = "brevislib"
+crate-type = [ "lib", "cdylib" ]
+
+[dependencies]
+lazy_static = "1.4.0"
+"peeking_take_while" = "0.1.2"
+maplit = "1.0.2"
+wasm-bindgen = "0.2.78"
+console_error_panic_hook = "0.1.6"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+

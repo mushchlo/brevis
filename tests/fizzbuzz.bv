@@ -1,0 +1,19 @@
+let fizzbuzz := fn (n, accumulator) {
+	accumulator :=
+		(if n % 3 == 0 and n % 5 == 0 {
+			"Fizzbuzz\n"
+		} else if n % 3 == 0 {
+			"Fizz\n"
+		} else if n % 5 == 0 {
+			"Buzz\n"
+		} else {
+			itoa(n) ~ "\n"
+		}) ~ accumulator;
+	if n == 0 {
+		accumulator
+	} else {
+		fizzbuzz(n - 1, accumulator);
+	}
+};
+
+fizzbuzz(100);

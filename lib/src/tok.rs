@@ -28,7 +28,7 @@ pub enum OpID {
 	Or,
 	Xor,
 }
-use OpID::*;
+use self::OpID::*;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum KeyWord {

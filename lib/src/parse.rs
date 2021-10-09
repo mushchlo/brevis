@@ -1,22 +1,20 @@
-use crate::{
-	ast::{
-		Binary, Call, Expr, ExprVal, ExprVal::*, IfElse, Lambda, Let, Type, Type::*, Unary, Variable, AST, AST::*, *,
-	},
-	lex::{
-		Token, TokenLiteral::*, TokenStream, TokenValue, TokenValue::*
-	},
-	tok::{
-		KeyWord, OpID, OpID::*
-	},
-	core::core_vals,
+use ast::{
+	Binary, Call, Expr, ExprVal, ExprVal::*, IfElse, Lambda, Let, Type, Type::*, Unary, Variable, AST, AST::*, *,
 };
+use lex::{
+	Token, TokenLiteral::*, TokenStream, TokenValue, TokenValue::*
+};
+use tok::{
+	KeyWord, OpID, OpID::*
+};
+use core::core_vals;
+
 use lazy_static::lazy_static;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
 lazy_static! {
 	static ref TYPE_DICT: Mutex<HashMap<&'static str, Type>> = Mutex::new(HashMap::new());
-//	static ref DECLARED_VARS: Mutex<Vec<(Variable, i16)>> = Mutex::new(vec![]);
 	static ref TYPE_VAR_COUNTER: Mutex<u16> = Mutex::new(0);
 
 	static ref VAR_TYPES: Mutex<Vec<HashMap<String, Type>>> =
@@ -87,6 +85,13 @@ impl TokenStream {
 	}
 
 	pub fn parse(&mut self) -> Expr {
+	    *VAR_TYPES.lock().unwrap() =
+		    vec![
+			    core_vals(),
+			    HashMap::new()
+		    ];
+	    TYPE_DICT.lock().unwrap().clear();
+		*TYPE_VAR_COUNTER.lock().unwrap() = 0;
 		let mut parsed = VecDeque::<Box<AST>>::new();
 
 		while self.peek().is_some() {

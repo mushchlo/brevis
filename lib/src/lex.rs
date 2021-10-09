@@ -1,10 +1,8 @@
 use peeking_take_while::PeekableExt;
 use std::collections::VecDeque;
 
-use crate::{
-	cradle::{CharsPos, CharsPosition, SourcePos},
-	tok::{KeyWord, OpID},
-};
+use cradle::{CharsPos, CharsPosition, SourcePos};
+use tok::{KeyWord, OpID, OpID::*, KEYWORD_DICT, BINARY_OP_DICT};
 
 #[derive(Debug, Clone)]
 pub struct Token {
@@ -23,6 +21,8 @@ pub enum TokenValue {
 	Punc(char),
 	Literal(TokenLiteral),
 }
+use self::TokenValue::*;
+
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenLiteral {
@@ -31,6 +31,7 @@ pub enum TokenLiteral {
 	FltLit(f64),
 	BoolLit(bool),
 }
+use self::TokenLiteral::*;
 
 #[derive(Clone)]
 pub struct TokenStream(pub VecDeque<Token>);
@@ -210,9 +211,6 @@ impl CharsPos<'_> {
 }
 
 fn map_keyword(kwstr: String) -> TokenValue {
-	use super::tok::{OpID::*, KEYWORD_DICT};
-	use TokenLiteral::*;
-	use TokenValue::*;
 	match kwstr.as_str() {
 		"true" => Literal(BoolLit(true)),
 		"false" => Literal(BoolLit(false)),
@@ -227,8 +225,6 @@ fn map_keyword(kwstr: String) -> TokenValue {
 }
 
 fn map_op(opstr: String, prev_op: Option<&TokenValue>) -> TokenValue {
-	use super::tok::{OpID::*, BINARY_OP_DICT};
-	use TokenValue::*;
 	match opstr.as_str() {
 		"!" => UnaryOp(Not),
 		":" => Punc(':'),

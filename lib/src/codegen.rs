@@ -1,27 +1,23 @@
-extern crate maplit;
-extern crate lazy_static;
-
 use lazy_static::lazy_static;
 use maplit::hashmap;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::{
-	anf::{
-		*, ANFExprVal::*,
-	},
-	ast::{
-		Type,
-		Type::*,
-	},
-	lex::{
-		TokenLiteral,
-		TokenLiteral::*,
-	},
-	tok::{
-		OpID,
-		OpID::*,
-	},
+use anf::{
+	*, ANFExprVal::*,
+};
+use ast::{
+	Type,
+	Type::*,
+};
+use lex::{
+	TokenLiteral,
+	TokenLiteral::*,
+};
+use tok::{
+	OpID,
+	OpID::*,
 };
 
 static LAMBDA_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -44,10 +40,192 @@ lazy_static! {
 			And => "&&",
 			Or => "||"
 		};
+	static ref PY_OP: HashMap<OpID, &'static str> = {
+			let mut tmp = C_OP.clone();
+			tmp.insert(Eq, ":=");
+			tmp.insert(And, "and");
+			tmp.insert(Or, "or");
+			tmp.insert(Concat, "+");
+			tmp
+		};
+	static ref JS_OP: HashMap<OpID, &'static str> = {
+			let mut tmp = C_OP.clone();
+			tmp.insert(Concat, "+");
+			tmp
+		};
 }
 
 fn lambda_name() -> String {
 	format!("lambda_{}", LAMBDA_COUNTER.fetch_add(1, Ordering::SeqCst))
+}
+
+pub fn compile_js(a: ANFAST) -> String {
+	match a {
+		ANFAST::LetNode(l) =>
+			format!("({} = {})",
+				mk_id(l.var.name),
+				if let Some(box def) = l.def {
+					compile_expr_js(def)
+				} else {
+					"false".to_string()
+				}
+			),
+		ANFAST::ExprNode(e) =>
+			compile_expr_js(e)
+	}
+}
+
+pub fn compile_expr_js(e: ANFExpr) -> String {
+	format!("({})", match e.val {
+		ANFExprVal::LambdaNode(l) =>
+			format!("(function ({}) {{ return {}; }})",
+				l.args.iter()
+					.map(|v| mk_id(v.name.clone()))
+					.reduce(|acc, next| acc + ", " + &next)
+					.unwrap_or_else(|| "".to_string()),
+				compile_expr_js(*l.body)
+			),
+		ANFExprVal::LiteralNode(lit) =>
+			compile_literal(lit),
+		ANFExprVal::IdentNode(id) =>
+			mk_id(id),
+		ANFExprVal::BlockNode(b) =>
+			format!("({})",
+				b.iter()
+					.map(|box line| compile_js(line.clone()))
+					.reduce(|acc, next| acc + "," + &next)
+					.unwrap_or_else(|| "".to_string()),
+			),
+		ANFExprVal::IfNode(ifelse) =>
+			format!("({}) ? ({}) : ({})",
+				compile_expr_js(*ifelse.cond),
+				compile_expr_js(*ifelse.then),
+				if let Some(box e) = ifelse.r#else {
+					compile_expr_js(e)
+				} else {
+					"false".to_string()
+				}
+			),
+		ANFExprVal::UnaryNode(u) =>
+			format!("{}({})",
+				match u.op {
+					Not => "!",
+					Minus => "-",
+					_ => panic!("unary is not unary!")
+				},
+				compile_expr_js(*u.expr)
+			),
+		ANFExprVal::BinaryNode(b) =>
+			if b.op == Xor {
+				format!("!({}) != !({})",
+					compile_expr_js(*b.left),
+					compile_expr_js(*b.right)
+				)
+			} else {
+				format!("({}) {} ({})",
+					compile_expr_js(*b.left),
+					if !JS_OP.contains_key(&b.op) {
+						panic!("{:?} is not in c_op", b.op)
+					} else { JS_OP[&b.op] },
+					compile_expr_js(*b.right)
+				)
+			},
+		ANFExprVal::CallNode(c) =>
+			format!("({})({})",
+				compile_expr_js(*c.func),
+				c.args.iter()
+					.map(|v| compile_trivial(v.clone()))
+					.reduce(|acc, next| acc + ", " + &next)
+					.unwrap_or_else(|| "".to_string())
+			),
+	})
+}
+
+pub fn compile_py(a: ANFAST) -> String {
+	match a {
+		ANFAST::LetNode(l) =>
+			format!("({} := {})",
+				mk_id(l.var.name),
+				if let Some(box def) = l.def {
+					compile_expr_py(def)
+				} else {
+					"None".to_string()
+				}
+			),
+		ANFAST::ExprNode(e) =>
+			compile_expr_py(e),
+	}
+}
+
+pub fn compile_expr_py(e: ANFExpr) -> String {
+	match e.val {
+		ANFExprVal::LambdaNode(l) =>
+			format!("(lambda {}: {})",
+				l.args.iter()
+					.map(|v| mk_id(v.name.clone()))
+					.reduce(|acc, next| acc + ", " + &next)
+					.unwrap_or_else(|| "".to_string()),
+				compile_expr_py(*l.body)
+			),
+		ANFExprVal::LiteralNode(lit) =>
+			compile_literal(lit),
+		ANFExprVal::IdentNode(id) =>
+			mk_id(id),
+		ANFExprVal::BlockNode(b) =>
+			format!("({}){}",
+				b.iter()
+					.map(|box line| compile_py(line.clone()))
+					.reduce(|acc, next| acc + ",\n" + &next)
+					.unwrap_or_else(|| "".to_string()),
+				if e.r#type != Void && b.len() > 1 {
+					"[-1]"
+				} else {
+					""
+				}
+			),
+		ANFExprVal::IfNode(ifelse) =>
+			format!("({} if {} else {})",
+				compile_expr_py(*ifelse.then),
+				compile_expr_py(*ifelse.cond),
+				if let Some(box e) = ifelse.r#else {
+					compile_expr_py(e)
+				} else {
+					"False".to_string()
+				}
+			),
+		ANFExprVal::UnaryNode(u) =>
+			format!("{}({})",
+				match u.op {
+					Not => "not ",
+					Minus => "-",
+					_ => panic!("unary is not unary!")
+				},
+				compile_expr_py(*u.expr)
+			),
+		ANFExprVal::BinaryNode(b) =>
+			if b.op == Xor {
+				format!("!({}) != !({})",
+					compile_expr_py(*b.left),
+					compile_expr_py(*b.right)
+				)
+			} else {
+				format!("{} {} ({})",
+					compile_expr_py(*b.left),
+					if !PY_OP.contains_key(&b.op) {
+						panic!("{:?} is not in py_op", b.op)
+					} else { PY_OP[&b.op] },
+					compile_expr_py(*b.right)
+				)
+			},
+		ANFExprVal::CallNode(c) =>
+			format!("{}({})",
+				compile_expr_py(*c.func),
+				c.args.iter()
+					.map(|v| compile_trivial(v.clone()))
+					.reduce(|acc, next| acc + ", " + &next)
+					.unwrap_or_else(|| "".to_string())
+			),
+	}
 }
 
 pub struct Compilation {
@@ -109,7 +287,6 @@ impl Compilation {
 	}
 
 	fn compile_lambda(&mut self, l: ANFLambda, mut name: String) -> String {
-		
 		let return_t = l.body.r#type.clone();
 		let args_str = l.args.iter()
 							.map(|v| compile_type_name(v.r#type.clone(), Some(mk_id(v.name.clone()))))

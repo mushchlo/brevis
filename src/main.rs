@@ -1,46 +1,33 @@
-#![feature(box_patterns)]
-#![feature(box_syntax)]
-#![feature(destructuring_assignment)]
+extern crate brevislib;
 
-use crate::{
-	lex::lex,
-	anf::anfify_expr,
-	codegen::Compilation,
-	core::{
-		CORE_FNS_9,
-		CORE_FNS_POSIX,
-	},
-};
 use std::{
-	fs,
-	env,
+    fs,
+    env
 };
-
-mod ast;
-mod cradle;
-mod lex;
-mod parse;
-mod tok;
-mod unify;
-mod anf;
-mod codegen;
-mod core;
+use brevislib::{
+    core::*,
+    *,
+};
 
 fn main() {
-	let core_libs = if env::args().any(|s| s == "-9") {
-		CORE_FNS_9
-	} else {
-		CORE_FNS_POSIX
+	let (lang, core_fns) = if env::args().any(|s| s == "-9") {
+		("c", core::CORE_FNS_9)
+	} else if env::args().any(|s| s == "-py") {
+        ("py", "")
+	} else if env::args().any(|s| s == "-js") {
+		("js", "")
+    } else {
+		("c", core::CORE_FNS_POSIX)
 	};
 
 	let contents = fs::read_to_string("test.bv").expect("failed to open/read file");
-	let mut lexed = lex(contents);
-	let mut parsed = lexed.parse();
-	parsed.annotate();
-
-	let parsed_anf = anfify_expr(parsed);
-
-	let mut compiler = Compilation::new();
-	let compiled = compiler.compile_expr(parsed_anf);
-	println!("{}\n{}\nvoid\nmain(void)\n{{\n{}\n{};\n}}", core_libs, compiler.global, compiler.fn_context.pop().unwrap(), compiled);
+	println!("{}",
+			if lang == "c" {
+				brevislib::compile_c(contents, core_fns)
+			} else if lang == "js" {
+			 	brevislib::compile_js(contents, core::CORE_FNS_JS)
+			} else {
+                 brevislib::compile_py(contents)
+            }
+    );
 }
