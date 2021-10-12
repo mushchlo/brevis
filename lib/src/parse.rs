@@ -375,7 +375,7 @@ impl TokenStream {
 							IntLit(i) => IntLit(-i),
 							FltLit(f) => FltLit(-f),
 							_ => panic!(
-								"Usage of unary minus operator `-` on a non-numberic value at {}",
+								"Usage of unary minus operator `-` on a non-numeric value at {}",
 								tok.start
 							),
 						}));
