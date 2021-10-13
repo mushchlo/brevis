@@ -4,84 +4,11 @@ use crate::{
 	lex::TokenLiteral,
 	tok::OpID,
 	ast::{
-		AST,
-		Type,
-		Expr,
-		ExprVal,
-		Variable,
+		*,
+		AST::*,
+		ExprVal::*
 	},
 };
-
-
-#[derive(Clone, Debug)]
-pub enum ANFAST {
-	LetNode(ANFLet),
-	ExprNode(ANFExpr),
-}
-
-#[derive(Clone, Debug)]
-pub struct ANFExpr {
-	pub val: ANFExprVal,
-	pub r#type: Type,
-}
-
-#[derive(Clone, Debug)]
-pub enum ANFExprVal {
-	LiteralNode(TokenLiteral),
-
-	IdentNode(String),
-	BlockNode(VecDeque<Box<ANFAST>>),
-	LambdaNode(ANFLambda),
-	IfNode(ANFIfElse),
-
-	UnaryNode(ANFUnary),
-	BinaryNode(ANFBinary),
-	CallNode(ANFCall),
-}
-
-#[derive(Clone, Debug)]
-pub struct ANFLet {
-	pub var: Variable,
-	pub def: Option<Box<ANFExpr>>,
-}
-
-#[derive(Clone, Debug)]
-pub enum Trivial {
-	Literal(TokenLiteral),
-	Ident(String),
-}
-
-#[derive(Clone, Debug)]
-pub struct ANFLambda {
-	pub args: VecDeque<Variable>,
-	pub body: Box<ANFExpr>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ANFIfElse {
-	pub cond: Box<ANFExpr>,
-	pub then: Box<ANFExpr>,
-	pub r#else: Option<Box<ANFExpr>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ANFUnary {
-	pub op: OpID,
-	pub expr: Box<ANFExpr>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ANFBinary {
-	pub op: OpID,
-	pub left: Box<ANFExpr>,
-	pub right: Box<ANFExpr>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ANFCall {
-	pub func: Box<ANFExpr>,
-	pub args: VecDeque<Trivial>,
-}
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -89,68 +16,67 @@ fn unique_name() -> String {
 		format!("{}", COUNTER.fetch_add(1, Ordering::SeqCst))
 }
 
-pub fn anfify(a: AST) -> ANFAST {
+pub fn anfify(a: AST) -> AST {
 	match a {
-		AST::LetNode(l) =>
-			ANFAST::LetNode(ANFLet {
+		LetNode(l) =>
+			LetNode(Let {
 				var: l.var.clone(),
 				def:
 					if let Some(box def) = l.def {
 						Some(box anfify_expr(def))
 					}  else { None }
 			}),
-		AST::ExprNode(e) =>
-			ANFAST::ExprNode(anfify_expr(e)),
+		ExprNode(e) =>
+			ExprNode(anfify_expr(e)),
 	}
 }
 
-/// Reorders an AST in administrative normal form
-pub fn anfify_expr(e: Expr) -> ANFExpr {
-	ANFExpr {
+/// Reorders an expression in administrative normal form
+pub fn anfify_expr(e: Expr) -> Expr {
+	Expr {
 		r#type: e.r#type.clone(),
 		val: 
 			match e.val {
-				ExprVal::LiteralNode(lit) => ANFExprVal::LiteralNode(lit),
-				ExprVal::IdentNode(id) =>
-					ANFExprVal::IdentNode(id),
-				ExprVal::IfNode(i) =>
-					ANFExprVal::IfNode(ANFIfElse {
+				LiteralNode(lit) => LiteralNode(lit),
+				IdentNode(id) =>
+					IdentNode(id),
+				IfNode(i) =>
+					IfNode(IfElse {
 						cond: box anfify_expr(*i.cond),
 						then: box anfify_expr(*i.then),
 						r#else: i.r#else.map(|box e| box anfify_expr(e)),
 					}),
-				ExprVal::BlockNode(b) =>
-					ANFExprVal::BlockNode(
+				BlockNode(b) =>
+					BlockNode(
 						b.iter().map(|box line| box anfify(line.clone())).collect()
 					),
-				ExprVal::LambdaNode(l) =>
-					ANFExprVal::LambdaNode(ANFLambda {
+				LambdaNode(l) =>
+					LambdaNode(Lambda {
 						args: l.args.clone(),
 						body: Box::new(anfify_expr(*l.body))
 					}),
-				ExprVal::UnaryNode(u) =>
-					ANFExprVal::UnaryNode(ANFUnary {
+				UnaryNode(u) =>
+					UnaryNode(Unary {
 						op: u.op,
 						expr: Box::new(anfify_expr(*u.expr))
 					}),
-				ExprVal::BinaryNode(b) =>
-					ANFExprVal::BinaryNode(ANFBinary {
+				BinaryNode(b) =>
+					BinaryNode(Binary {
 						op: b.op,
 						left: Box::new(anfify_expr(*b.left.clone())),
 						right: Box::new(anfify_expr(*b.right)),
 					}),
-				ExprVal::CallNode(c) => {
+				CallNode(c) => {
 					let mut block = VecDeque::new();
 					let mut trivial_args = VecDeque::new();
 					for arg in c.args.iter() {
 						trivial_args.push_back(match arg.val.clone() {
-							ExprVal::LiteralNode(lit) => Trivial::Literal(lit),
-							ExprVal::IdentNode(id) => Trivial::Ident(id),
+							LiteralNode(_) | IdentNode(_) => arg.clone(),
 
 							_ => {
 								let id = unique_name();
 								block.push_back(Box::new(
-									ANFAST::LetNode(ANFLet {
+									LetNode(Let {
 										var:
 											Variable {
 												name: id.clone(),
@@ -162,13 +88,16 @@ pub fn anfify_expr(e: Expr) -> ANFExpr {
 											))
 									})
 								));
-								Trivial::Ident(id)
+								Expr {
+									val: IdentNode(id),
+									r#type: arg.r#type.clone()
+								}
 							}
 						});
 					}
 					block.push_back(
-						Box::new(ANFAST::ExprNode(ANFExpr {
-							val: ANFExprVal::CallNode(ANFCall {
+						Box::new(ExprNode(Expr {
+							val: CallNode(Call {
 								args: trivial_args,
 								func: Box::new(anfify_expr(*c.func))
 							}),
@@ -176,7 +105,7 @@ pub fn anfify_expr(e: Expr) -> ANFExpr {
 						}))
 					);
 
-					ANFExprVal::BlockNode(block)
+					BlockNode(block)
 				}
 			}
 	}

@@ -4,11 +4,9 @@ use maplit::hashmap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anf::{
-	*, ANFExprVal::*,
-};
 use ast::{
-	Type,
+	*,
+	ExprVal::*,
 	Type::*,
 };
 use lex::{
@@ -59,9 +57,9 @@ fn lambda_name() -> String {
 	format!("lambda_{}", LAMBDA_COUNTER.fetch_add(1, Ordering::SeqCst))
 }
 
-pub fn compile_js(a: ANFAST) -> String {
+pub fn compile_js(a: AST) -> String {
 	match a {
-		ANFAST::LetNode(l) =>
+		AST::LetNode(l) =>
 			format!("({} = {})",
 				mk_id(l.var.name),
 				if let Some(box def) = l.def {
@@ -70,14 +68,14 @@ pub fn compile_js(a: ANFAST) -> String {
 					"false".to_string()
 				}
 			),
-		ANFAST::ExprNode(e) =>
+		AST::ExprNode(e) =>
 			compile_expr_js(e)
 	}
 }
 
-pub fn compile_expr_js(e: ANFExpr) -> String {
+pub fn compile_expr_js(e: Expr) -> String {
 	format!("({})", match e.val {
-		ANFExprVal::LambdaNode(l) =>
+		ExprVal::LambdaNode(l) =>
 			format!("(function ({}) {{ return {}; }})",
 				l.args.iter()
 					.map(|v| mk_id(v.name.clone()))
@@ -85,18 +83,18 @@ pub fn compile_expr_js(e: ANFExpr) -> String {
 					.unwrap_or_else(|| "".to_string()),
 				compile_expr_js(*l.body)
 			),
-		ANFExprVal::LiteralNode(lit) =>
+		ExprVal::LiteralNode(lit) =>
 			compile_literal(lit),
-		ANFExprVal::IdentNode(id) =>
+		ExprVal::IdentNode(id) =>
 			mk_id(id),
-		ANFExprVal::BlockNode(b) =>
+		ExprVal::BlockNode(b) =>
 			format!("({})",
 				b.iter()
 					.map(|box line| compile_js(line.clone()))
 					.reduce(|acc, next| acc + "," + &next)
 					.unwrap_or_else(|| "".to_string()),
 			),
-		ANFExprVal::IfNode(ifelse) =>
+		ExprVal::IfNode(ifelse) =>
 			format!("({}) ? ({}) : ({})",
 				compile_expr_js(*ifelse.cond),
 				compile_expr_js(*ifelse.then),
@@ -106,7 +104,7 @@ pub fn compile_expr_js(e: ANFExpr) -> String {
 					"false".to_string()
 				}
 			),
-		ANFExprVal::UnaryNode(u) =>
+		ExprVal::UnaryNode(u) =>
 			format!("{}({})",
 				match u.op {
 					Not => "!",
@@ -115,7 +113,7 @@ pub fn compile_expr_js(e: ANFExpr) -> String {
 				},
 				compile_expr_js(*u.expr)
 			),
-		ANFExprVal::BinaryNode(b) =>
+		ExprVal::BinaryNode(b) =>
 			if b.op == Xor {
 				format!("!({}) != !({})",
 					compile_expr_js(*b.left),
@@ -130,7 +128,7 @@ pub fn compile_expr_js(e: ANFExpr) -> String {
 					compile_expr_js(*b.right)
 				)
 			},
-		ANFExprVal::CallNode(c) =>
+		ExprVal::CallNode(c) =>
 			format!("({})({})",
 				compile_expr_js(*c.func),
 				c.args.iter()
@@ -141,9 +139,9 @@ pub fn compile_expr_js(e: ANFExpr) -> String {
 	})
 }
 
-pub fn compile_py(a: ANFAST) -> String {
+pub fn compile_py(a: AST) -> String {
 	match a {
-		ANFAST::LetNode(l) =>
+		AST::LetNode(l) =>
 			format!("({} := {})",
 				mk_id(l.var.name),
 				if let Some(box def) = l.def {
@@ -152,14 +150,14 @@ pub fn compile_py(a: ANFAST) -> String {
 					"None".to_string()
 				}
 			),
-		ANFAST::ExprNode(e) =>
+		AST::ExprNode(e) =>
 			compile_expr_py(e),
 	}
 }
 
-pub fn compile_expr_py(e: ANFExpr) -> String {
+pub fn compile_expr_py(e: Expr) -> String {
 	match e.val {
-		ANFExprVal::LambdaNode(l) =>
+		ExprVal::LambdaNode(l) =>
 			format!("(lambda {}: {})",
 				l.args.iter()
 					.map(|v| mk_id(v.name.clone()))
@@ -167,11 +165,11 @@ pub fn compile_expr_py(e: ANFExpr) -> String {
 					.unwrap_or_else(|| "".to_string()),
 				compile_expr_py(*l.body)
 			),
-		ANFExprVal::LiteralNode(lit) =>
+		ExprVal::LiteralNode(lit) =>
 			compile_literal(lit),
-		ANFExprVal::IdentNode(id) =>
+		ExprVal::IdentNode(id) =>
 			mk_id(id),
-		ANFExprVal::BlockNode(b) =>
+		ExprVal::BlockNode(b) =>
 			format!("({}){}",
 				b.iter()
 					.map(|box line| compile_py(line.clone()))
@@ -183,7 +181,7 @@ pub fn compile_expr_py(e: ANFExpr) -> String {
 					""
 				}
 			),
-		ANFExprVal::IfNode(ifelse) =>
+		ExprVal::IfNode(ifelse) =>
 			format!("({} if {} else {})",
 				compile_expr_py(*ifelse.then),
 				compile_expr_py(*ifelse.cond),
@@ -193,7 +191,7 @@ pub fn compile_expr_py(e: ANFExpr) -> String {
 					"False".to_string()
 				}
 			),
-		ANFExprVal::UnaryNode(u) =>
+		ExprVal::UnaryNode(u) =>
 			format!("{}({})",
 				match u.op {
 					Not => "not ",
@@ -202,7 +200,7 @@ pub fn compile_expr_py(e: ANFExpr) -> String {
 				},
 				compile_expr_py(*u.expr)
 			),
-		ANFExprVal::BinaryNode(b) =>
+		ExprVal::BinaryNode(b) =>
 			if b.op == Xor {
 				format!("!({}) != !({})",
 					compile_expr_py(*b.left),
@@ -217,7 +215,7 @@ pub fn compile_expr_py(e: ANFExpr) -> String {
 					compile_expr_py(*b.right)
 				)
 			},
-		ANFExprVal::CallNode(c) =>
+		ExprVal::CallNode(c) =>
 			format!("{}({})",
 				compile_expr_py(*c.func),
 				c.args.iter()
@@ -241,9 +239,9 @@ impl Compilation {
 		}
 	}
 
-	pub fn compile(&mut self, a: ANFAST) -> String {
+	pub fn compile(&mut self, a: AST) -> String {
 		match a {
-			ANFAST::LetNode(l) => {
+			AST::LetNode(l) => {
 				let c_type_name =
 					match l.var.r#type {
 						TypeConstructor(mut tc) if tc.name == "Function" => {
@@ -252,7 +250,7 @@ impl Compilation {
 												.map(|t| compile_type_name(t.clone(), None))
 												.reduce(|acc, next| acc + ", " + &next)
 												.unwrap_or_else(|| "".to_string());
-							if let Some(box ANFExpr {
+							if let Some(box Expr {
 								val: LambdaNode(lambda),
 								..
 							}) = l.def {
@@ -281,12 +279,12 @@ impl Compilation {
 				format!("{}\n", def_str)
 			}
 
-			ANFAST::ExprNode(e) => 
+			AST::ExprNode(e) => 
 				format!("({})", self.compile_expr(e))
 		}
 	}
 
-	fn compile_lambda(&mut self, l: ANFLambda, mut name: String) -> String {
+	fn compile_lambda(&mut self, l: Lambda, mut name: String) -> String {
 		let return_t = l.body.r#type.clone();
 		let args_str = l.args.iter()
 							.map(|v| compile_type_name(v.r#type.clone(), Some(mk_id(v.name.clone()))))
@@ -315,7 +313,7 @@ impl Compilation {
 	}
 		
 
-	pub fn compile_expr(&mut self, e: ANFExpr) -> String {
+	pub fn compile_expr(&mut self, e: Expr) -> String {
 		match e.val {
 			LiteralNode(lit) =>
 				compile_literal(lit),
@@ -403,10 +401,11 @@ fn compile_literal(lit: TokenLiteral) -> String {
 	}
 }
 
-fn compile_trivial(tr: Trivial) -> String {
-	match tr {
-		Trivial::Literal(lit) => compile_literal(lit),
-		Trivial::Ident(id) => mk_id(id)
+fn compile_trivial(tr: Expr) -> String {
+	match tr.val {
+		ExprVal::LiteralNode(lit) => compile_literal(lit),
+		ExprVal::IdentNode(id) => mk_id(id),
+		_ => panic!("trivial is not trivial")
 	}
 }
 
