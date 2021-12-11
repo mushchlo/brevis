@@ -231,7 +231,7 @@ fn map_op(opstr: String, prev_op: Option<&TokenValue>) -> TokenValue {
 		"-" if !matches!(prev_op, Some(Literal(_))) && !matches!(prev_op, Some(Ident(_))) => {
 			UnaryOp(Minus)
 		}
-		":=" => AssignOp(Eq),
+		"=" => AssignOp(Eq),
 		op => BinaryOp(
 			match_dict(BINARY_OP_DICT.iter().cloned(), op)
 				.unwrap_or_else(|| panic!("invalid operator `{}`", opstr)),
@@ -274,7 +274,7 @@ fn un_escape(str: String) -> String {
 }*/
 
 fn is_op_char(c: char) -> bool {
-	"+-*/:=!~<>%".contains(&c.to_string())
+	"`|+-*/:=!~<>%".contains(&c.to_string())
 }
 
 fn is_punc_char(c: char) -> bool {

@@ -27,6 +27,8 @@ pub enum OpID {
 	And,
 	Or,
 	Xor,
+
+	InfixFn,
 }
 use self::OpID::*;
 
@@ -70,6 +72,7 @@ pub const BINARY_OP_DICT: &[(OpID, &str)] = &[
 	(Lteq, "<="),
 	(Doeq, "=="),
 	(Noteq, "!="),
+	(InfixFn, "`"),
 ];
 
 use crate::ast::Type;

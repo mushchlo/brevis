@@ -136,26 +136,43 @@ impl TokenStream {
 
 	fn maybe_binary(&mut self, left_expr: Expr, prev_prec: i8) -> Expr {
 		if let Some(tok) = self.peek() {
-			if let BinaryOp(_) | AssignOp(_) = tok.val {
-				// TODO: this is a mess, make it not so
-				let (curr_prec, curr_op) = match tok.val {
-					AssignOp(a) => (0, a),
-					BinaryOp(b) => (precedence(b), b),
-					_ => panic!("unreachable"),
-				};
-
-				if curr_prec > prev_prec {
-					self.next();
-					let tmp = self.parse_atom().expect_expr();
-					let right_expr = self.maybe_binary(tmp, curr_prec);
-					let parsed = new_expr(BinaryNode(Binary {
-						left: Box::new(left_expr),
-						right: Box::new(right_expr),
-						op: curr_op,
+			match tok.val {
+				BinaryOp(InfixFn) => {
+					self.skip_token(BinaryOp(InfixFn));
+				// TODO: MASSIVE BUG HERE. INFIX FNs CANNOT CONTAIN BINARY OP??? AWFUL IMPL
+					let f = new_expr(self.maybe_call(|s| s.parse_atom()).expect_expr().val);
+					self.skip_token(BinaryOp(InfixFn));
+					let right_expr = self.parse_expr();
+					let parsed = new_expr(CallNode(Call {
+						func: box f,
+						args: VecDeque::from([ left_expr, right_expr ]),
 					}));
 
-					return self.maybe_binary(parsed, prev_prec);
+					return self.maybe_binary(parsed, -1);
 				}
+				BinaryOp(_) | AssignOp(_) => {
+					// TODO: this is a mess, make it not so
+					let (curr_prec, curr_op) = match tok.val {
+						AssignOp(a) => (0, a),
+						BinaryOp(b) => (precedence(b), b),
+						_ => panic!("unreachable"),
+					};
+
+					if curr_prec > prev_prec {
+						self.next();
+						let tmp = self.parse_atom().expect_expr();
+						let right_expr = self.maybe_binary(tmp, curr_prec);
+						let parsed = new_expr(BinaryNode(Binary {
+							left: Box::new(left_expr),
+							right: Box::new(right_expr),
+							op: curr_op,
+						}));
+
+						return self.maybe_binary(parsed, prev_prec);
+					}
+				}
+
+				_ => {}
 			}
 		}
 
