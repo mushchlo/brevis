@@ -139,93 +139,6 @@ pub fn compile_expr_js(e: Expr) -> String {
 	})
 }
 
-pub fn compile_py(a: AST) -> String {
-	match a {
-		AST::LetNode(l) =>
-			format!("({} := {})",
-				mk_id(l.var.name),
-				if let Some(box def) = l.def {
-					compile_expr_py(def)
-				} else {
-					"None".to_string()
-				}
-			),
-		AST::ExprNode(e) =>
-			compile_expr_py(e),
-	}
-}
-
-pub fn compile_expr_py(e: Expr) -> String {
-	match e.val {
-		ExprVal::LambdaNode(l) =>
-			format!("(lambda {}: {})",
-				l.args.iter()
-					.map(|v| mk_id(v.name.clone()))
-					.reduce(|acc, next| acc + ", " + &next)
-					.unwrap_or_else(|| "".to_string()),
-				compile_expr_py(*l.body)
-			),
-		ExprVal::LiteralNode(lit) =>
-			compile_literal(lit),
-		ExprVal::IdentNode(id) =>
-			mk_id(id),
-		ExprVal::BlockNode(b) =>
-			format!("({}){}",
-				b.iter()
-					.map(|box line| compile_py(line.clone()))
-					.reduce(|acc, next| acc + ",\n" + &next)
-					.unwrap_or_else(|| "".to_string()),
-				if e.r#type != Void && b.len() > 1 {
-					"[-1]"
-				} else {
-					""
-				}
-			),
-		ExprVal::IfNode(ifelse) =>
-			format!("({} if {} else {})",
-				compile_expr_py(*ifelse.then),
-				compile_expr_py(*ifelse.cond),
-				if let Some(box e) = ifelse.r#else {
-					compile_expr_py(e)
-				} else {
-					"False".to_string()
-				}
-			),
-		ExprVal::UnaryNode(u) =>
-			format!("{}({})",
-				match u.op {
-					Not => "not ",
-					Minus => "-",
-					_ => panic!("unary is not unary!")
-				},
-				compile_expr_py(*u.expr)
-			),
-		ExprVal::BinaryNode(b) =>
-			if b.op == Xor {
-				format!("!({}) != !({})",
-					compile_expr_py(*b.left),
-					compile_expr_py(*b.right)
-				)
-			} else {
-				format!("{} {} ({})",
-					compile_expr_py(*b.left),
-					if !PY_OP.contains_key(&b.op) {
-						panic!("{:?} is not in py_op", b.op)
-					} else { PY_OP[&b.op] },
-					compile_expr_py(*b.right)
-				)
-			},
-		ExprVal::CallNode(c) =>
-			format!("{}({})",
-				compile_expr_py(*c.func),
-				c.args.iter()
-					.map(|v| compile_trivial(v.clone()))
-					.reduce(|acc, next| acc + ", " + &next)
-					.unwrap_or_else(|| "".to_string())
-			),
-	}
-}
-
 pub struct Compilation {
 	pub global: String,
 	pub fn_context: Vec<String>
@@ -279,7 +192,7 @@ impl Compilation {
 				format!("{}\n", def_str)
 			}
 
-			AST::ExprNode(e) => 
+			AST::ExprNode(e) =>
 				format!("({})", self.compile_expr(e))
 		}
 	}
@@ -311,7 +224,7 @@ impl Compilation {
 			);
 		name
 	}
-		
+
 
 	pub fn compile_expr(&mut self, e: Expr) -> String {
 		match e.val {
@@ -430,7 +343,7 @@ fn compile_type_name(t: Type, name: Option<String>) -> String {
 			}
 			_ => panic!("aaaa i cant make type {:#?}", t)
 		}.to_string(),
-	
+
 		if name.is_some() { " ".to_string() + &name.unwrap() } else { "".to_string() }
 	)
 }

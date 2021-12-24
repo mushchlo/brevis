@@ -7,17 +7,10 @@ use crate::{
 	anf::anfify_expr,
 	codegen::{
 		Compilation,
-		compile_expr_py,
 		compile_expr_js
-	},
-	core::{
-		CORE_FNS_9,
-		CORE_FNS_POSIX,
-		CORE_FNS_PY,
 	},
 };
 use wasm_bindgen::prelude::*;
-use std::panic;
 
 extern crate lazy_static;
 extern crate maplit;
@@ -44,16 +37,6 @@ pub fn compile_js(s: String, core_fns: &str) -> String {
 
 	let parsed_anf = anfify_expr(parsed);
 	format!("{}\n{}; buffered", core_fns, compile_expr_js(parsed_anf))
-}
-
-#[wasm_bindgen]
-pub fn compile_py(s: String) -> String {
-    let mut lexed = lex(s);
-	let mut parsed = lexed.parse();
-	parsed.annotate();
-
-	let parsed_anf = anfify_expr(parsed);
-	format!("{}\n{}", core::CORE_FNS_PY, compile_expr_py(parsed_anf))
 }
 
 #[wasm_bindgen]

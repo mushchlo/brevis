@@ -1,8 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::{
-	lex::TokenLiteral,
-	tok::OpID,
 	ast::{
 		*,
 		AST::*,
@@ -35,7 +33,7 @@ pub fn anfify(a: AST) -> AST {
 pub fn anfify_expr(e: Expr) -> Expr {
 	Expr {
 		r#type: e.r#type.clone(),
-		val: 
+		val:
 			match e.val {
 				LiteralNode(lit) => LiteralNode(lit),
 				IdentNode(id) =>
