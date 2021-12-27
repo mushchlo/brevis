@@ -12,6 +12,15 @@ pub struct SourcePos {
 	pub col: u32,
 }
 
+impl SourcePos {
+	pub fn new() -> Self {
+		SourcePos {
+			row: 0,
+			col: 0,
+		}
+	}
+}
+
 impl std::fmt::Display for SourcePos {
 	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
 		write!(f, "{}:{}", self.row, self.col)

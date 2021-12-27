@@ -1,11 +1,23 @@
 use ast::{
-	Binary, Call, Expr, ExprVal, ExprVal::*, IfElse, Lambda, Let, Type, Type::*, Unary, Variable, AST, AST::*, *,
+	*,
+	Type::*,
+	AST::*,
+	ExprVal::*,
+	Literal::*
 };
-use lex::{
-	Token, TokenLiteral::*, TokenStream, TokenValue, TokenValue::*
-};
+
+use lex::TokenStream;
+
+use cradle::SourcePos;
+
 use tok::{
-	KeyWord, OpID, OpID::*
+	Token,
+	TokenLiteral::*,
+	TokenValue,
+	TokenValue::*,
+	KeyWord,
+	OpID,
+	OpID::*,
 };
 use core::core_vals;
 
@@ -150,6 +162,7 @@ impl TokenStream {
 
 					return self.maybe_binary(parsed, -1);
 				}
+
 				BinaryOp(_) | AssignOp(_) => {
 					// TODO: this is a mess, make it not so
 					let (curr_prec, curr_op) = match tok.val {
@@ -160,8 +173,25 @@ impl TokenStream {
 
 					if curr_prec > prev_prec {
 						self.next();
-						let tmp = self.parse_atom().expect_expr();
-						let right_expr = self.maybe_binary(tmp, curr_prec);
+						let right_expr =
+							if tok.val == BinaryOp(Member) {
+								if let Some(tok) = self.peek() {
+									match tok.val {
+										Ident(member) => {
+											self.skip_token(Ident(member.clone()));
+											new_expr(IdentNode(member))
+										}
+
+										_ => panic!("At {}, the dot operator was used with a non-identifier RHS argument.", tok.start)
+									}
+								} else {
+									panic!("Expected a RHS argument for the dot operator, found EOF");
+								}
+							} else {
+								let tmp = self.parse_atom().expect_expr();
+								self.maybe_binary(tmp, curr_prec)
+							};
+
 						let parsed = new_expr(BinaryNode(Binary {
 							left: Box::new(left_expr),
 							right: Box::new(right_expr),
@@ -189,6 +219,7 @@ impl TokenStream {
 					ExprNode(expr)
 				}
 				'{' => s.parse_block(),
+				'[' => s.parse_struct_literal(),
 				_ => panic!(
 					"unexpected punctuation {:?} at {}",
 					p,
@@ -203,7 +234,7 @@ impl TokenStream {
 			},
 			Literal(l) => {
 				s.skip_token(Literal(l.clone()));
-				new_expr_ast(LiteralNode(l))
+				new_expr_ast(LiteralNode(AtomicLiteral(l)))
 			}
 			Ident(_) => {
 				let id = s.parse_id();
@@ -258,7 +289,7 @@ impl TokenStream {
 					Some(t) => tok = t,
 					None => break,
 				}
-			} else {
+			} else if first {
 				first = false;
 			}
 
@@ -359,6 +390,36 @@ impl TokenStream {
 		}
 	}
 
+	fn parse_struct_literal(&mut self) -> AST {
+		let struct_args = self.delimited(Punc('['), Punc(']'), Punc(','), |s| {
+			let possibly_name = s.next();
+
+			let name = match possibly_name {
+				Some(Token {
+					val: Ident(name),
+					..
+				}) => name,
+
+				Some(nonsense) => panic!("expected a name for member of structure literal at {}, found {:#?}", nonsense.start, nonsense),
+
+				None => panic!("expected a name for member of structure literal, found EOF"),
+			};
+			s.skip_token(Punc(':'));
+			let val = s.parse_expr();
+
+			Aggregate {
+				name,
+				val
+			}
+		});
+
+		new_expr_ast(
+			LiteralNode(
+				StructLiteral(struct_args.into())
+			)
+		)
+	}
+
 	fn parse_lambda(&mut self) -> AST {
 		self.skip_token(KeyWord(KeyWord::λ));
 		var_types_new_stack();
@@ -389,8 +450,8 @@ impl TokenStream {
 					self.skip_token(Literal(l.clone()));
 					if op == Minus {
 						return new_expr_ast(LiteralNode(match l {
-							IntLit(i) => IntLit(-i),
-							FltLit(f) => FltLit(-f),
+							IntLit(i) => AtomicLiteral(IntLit(-i)),
+							FltLit(f) => AtomicLiteral(FltLit(-f)),
 							_ => panic!(
 								"Usage of unary minus operator `-` on a non-numeric value at {}",
 								tok.start
@@ -398,7 +459,7 @@ impl TokenStream {
 						}));
 					} else if op == Not {
 						return new_expr_ast(LiteralNode(match l {
-							BoolLit(b) => BoolLit(!b),
+							BoolLit(b) => AtomicLiteral(BoolLit(!b)),
 							_ => panic!(
 								"Usage of not operator `!` on a non-boolean value at {}",
 								tok.start
@@ -445,13 +506,39 @@ impl TokenStream {
 						kw
 					),
 				},
-				Ident(id) => match TYPE_DICT.lock().unwrap().get(&*id) {
-					Some(t) => t.clone(),
-					_ => panic!(
-						"identifier {} does not represent a type, but was used in place of one",
-						id
-					),
-				},
+				Ident(id) =>
+					match TYPE_DICT.lock().unwrap().get(&*id) {
+						Some(t) => t.clone(),
+						_ => panic!("identifier {} does not represent a type, but was used in place of one", id),
+					},
+
+				Punc('[') => {
+					self.0.push_front(Token {
+						val: Punc('['),
+						start: SourcePos::new(),
+						end: SourcePos::new(),
+					}); // a dummy token to allow for the delimited() call below.
+					Type::Struct(
+						self.delimited(Punc('['), Punc(']'), Punc(','), |s| {
+							let name =
+								match s.next() {
+									Some(Token { val: Ident(id), .. }) =>
+										id,
+									Some(not_a_name) =>
+										panic!("At {}, non-identifier {:?} was used as a member for a structure type", not_a_name.start, not_a_name.val),
+									None =>
+										panic!("Expected an identifier as a member for a struct type, found EOF"),
+								};
+							s.skip_token(Punc(':'));
+							let r#type = s.parse_type();
+							AggregateType {
+								name,
+								r#type,
+							}
+						}).into()
+					)
+				}
+
 				non_type => panic!("expected type, received {:?}", non_type),
 			},
 
@@ -473,6 +560,8 @@ fn precedence(id: OpID) -> i8 {
 		Add | Sub | Concat => 10,
 
 		Mul | Div | Mod => 20,
+
+		Member => 30,
 
 		_ => panic!("operator {:?} has no precedence, but it was requested", id),
 	}

@@ -8,12 +8,11 @@ use ast::{
 	*,
 	ExprVal::*,
 	Type::*,
-};
-use lex::{
-	TokenLiteral,
-	TokenLiteral::*,
+	Literal::*,
 };
 use tok::{
+	TokenLiteral,
+	TokenLiteral::*,
 	OpID,
 	OpID::*,
 };
@@ -24,6 +23,7 @@ lazy_static! {
 	static ref C_OP: HashMap<OpID, &'static str> =
 		hashmap!{
 			Eq => "=",
+			Member => ".",
 			Add => "+",
 			Sub => "-",
 			Mul => "*",
@@ -37,14 +37,6 @@ lazy_static! {
 			Noteq => "!=",
 			And => "&&",
 			Or => "||"
-		};
-	static ref PY_OP: HashMap<OpID, &'static str> = {
-			let mut tmp = C_OP.clone();
-			tmp.insert(Eq, ":=");
-			tmp.insert(And, "and");
-			tmp.insert(Or, "or");
-			tmp.insert(Concat, "+");
-			tmp
 		};
 	static ref JS_OP: HashMap<OpID, &'static str> = {
 			let mut tmp = C_OP.clone();
@@ -75,7 +67,7 @@ pub fn compile_js(a: AST) -> String {
 
 pub fn compile_expr_js(e: Expr) -> String {
 	format!("({})", match e.val {
-		ExprVal::LambdaNode(l) =>
+		LambdaNode(l) =>
 			format!("(function ({}) {{ return {}; }})",
 				l.args.iter()
 					.map(|v| mk_id(v.name.clone()))
@@ -83,18 +75,20 @@ pub fn compile_expr_js(e: Expr) -> String {
 					.unwrap_or_else(|| "".to_string()),
 				compile_expr_js(*l.body)
 			),
-		ExprVal::LiteralNode(lit) =>
-			compile_literal(lit),
-		ExprVal::IdentNode(id) =>
+		LiteralNode(AtomicLiteral(atom)) =>
+			compile_atomic(atom),
+		LiteralNode(StructLiteral(_s)) =>
+			panic!("structs not yet implemented for js backend"),
+		IdentNode(id) =>
 			mk_id(id),
-		ExprVal::BlockNode(b) =>
+		BlockNode(b) =>
 			format!("({})",
 				b.iter()
 					.map(|box line| compile_js(line.clone()))
 					.reduce(|acc, next| acc + "," + &next)
 					.unwrap_or_else(|| "".to_string()),
 			),
-		ExprVal::IfNode(ifelse) =>
+		IfNode(ifelse) =>
 			format!("({}) ? ({}) : ({})",
 				compile_expr_js(*ifelse.cond),
 				compile_expr_js(*ifelse.then),
@@ -104,7 +98,7 @@ pub fn compile_expr_js(e: Expr) -> String {
 					"false".to_string()
 				}
 			),
-		ExprVal::UnaryNode(u) =>
+		UnaryNode(u) =>
 			format!("{}({})",
 				match u.op {
 					Not => "!",
@@ -113,7 +107,7 @@ pub fn compile_expr_js(e: Expr) -> String {
 				},
 				compile_expr_js(*u.expr)
 			),
-		ExprVal::BinaryNode(b) =>
+		BinaryNode(b) =>
 			if b.op == Xor {
 				format!("!({}) != !({})",
 					compile_expr_js(*b.left),
@@ -128,7 +122,7 @@ pub fn compile_expr_js(e: Expr) -> String {
 					compile_expr_js(*b.right)
 				)
 			},
-		ExprVal::CallNode(c) =>
+		CallNode(c) =>
 			format!("({})({})",
 				compile_expr_js(*c.func),
 				c.args.iter()
@@ -140,14 +134,18 @@ pub fn compile_expr_js(e: Expr) -> String {
 }
 
 pub struct Compilation {
+	pub global_defs: String,
 	pub global: String,
+	pub type_map: HashMap<Type, String>,
 	pub fn_context: Vec<String>
 }
 
 impl Compilation {
 	pub fn new() -> Self {
 		Compilation {
+			global_defs: "".to_string(),
 			global: "".to_string(),
+			type_map: HashMap::new(),
 			fn_context: vec!["".to_string()]
 		}
 	}
@@ -160,7 +158,7 @@ impl Compilation {
 						TypeConstructor(mut tc) if tc.name == "Function" => {
 							let ret_t = tc.args.pop().unwrap();
 							let args_t = tc.args.iter()
-												.map(|t| compile_type_name(t.clone(), None))
+												.map(|t| self.compile_type_name(t.clone(), None))
 												.reduce(|acc, next| acc + ", " + &next)
 												.unwrap_or_else(|| "".to_string());
 							if let Some(box Expr {
@@ -171,13 +169,13 @@ impl Compilation {
 								return "".to_string();
 							}
 							format!("{} (*{})({})",
-								compile_type_name(ret_t, None),
+								self.compile_type_name(ret_t, None),
 								mk_id(l.var.name.clone()),
 								args_t
 							)
 						}
 
-						t => format!("{} {}", compile_type_name(t, None), mk_id(l.var.name.clone()))
+						t => format!("{} {}", self.compile_type_name(t, None), mk_id(l.var.name.clone()))
 					};
 				let def_str =
 					if let Some(box expr) = l.def {
@@ -200,7 +198,7 @@ impl Compilation {
 	fn compile_lambda(&mut self, l: Lambda, mut name: String) -> String {
 		let return_t = l.body.r#type.clone();
 		let args_str = l.args.iter()
-							.map(|v| compile_type_name(v.r#type.clone(), Some(mk_id(v.name.clone()))))
+							.map(|v| self.compile_type_name(v.r#type.clone(), Some(v.name.clone())))
 							.reduce(|acc, next| acc + ", " + &next)
 							.unwrap_or_else(|| "void".to_string());
 		if name.is_empty() {
@@ -209,9 +207,9 @@ impl Compilation {
 		self.fn_context.push("".to_string());
 		let c_body = self.compile_expr(*l.body);
 		let declarations = self.fn_context.pop();
-		self.global +=
+		let fn_declaration =
 			&format!("{}\n{}({})\n{{\n{}{}{};\n}}\n",
-				compile_type_name(return_t.clone(), None),
+				self.compile_type_name(return_t.clone(), None),
 				name,
 				args_str,
 				declarations.unwrap(),
@@ -222,6 +220,7 @@ impl Compilation {
 
 				c_body
 			);
+		self.global += fn_declaration;
 		name
 	}
 
@@ -229,7 +228,7 @@ impl Compilation {
 	pub fn compile_expr(&mut self, e: Expr) -> String {
 		match e.val {
 			LiteralNode(lit) =>
-				compile_literal(lit),
+				self.compile_literal(lit),
 
 			IdentNode(id) => mk_id(id),
 
@@ -247,7 +246,8 @@ impl Compilation {
 												.unwrap()
 							),
 
-			LambdaNode(l) => self.compile_lambda(l, "".to_string()),
+			LambdaNode(l) =>
+				self.compile_lambda(l, "".to_string()),
 
 			IfNode(ifelse) =>
 				format!("({}) ? ({}) : ({})",
@@ -289,6 +289,8 @@ impl Compilation {
 					}
 				} else if b.op == Xor {
 					format!("!({}) != !({})", c_left, c_right)
+				} else if b.op == Member {
+					format!("({}).{}", c_left, c_right)
 				} else {
 					format!("({}) {} ({})", c_left, C_OP[&b.op], c_right)
 				}
@@ -303,52 +305,115 @@ impl Compilation {
 			}
 		}
 	}
+
+	fn compile_type_name(&mut self, t: Type, name: Option<String>) -> String {
+		format!("{}{}",
+			match t {
+				Void => "void",
+				Int => "long long int",
+				Float => "long double",
+				Str => "char*",
+				Bool => "char",
+
+				TypeConstructor(mut tc) if tc.name == "Function" => {
+					let ret_t = tc.args.pop().unwrap();
+					return format!("{} (*{})({})",
+						self.compile_type_name(ret_t, None),
+						if name.is_some() { name.unwrap() } else { "".to_string() },
+						tc.args.into_iter()
+							.map(|t| self.compile_type_name(t, None))
+							.reduce(|acc, next| acc + ", " + &next)
+							.unwrap_or_else(|| "void".to_string())
+					);
+				}
+
+				Struct(mut s) => {
+					s.sort();
+					let name = s.iter().fold("".to_string(), |acc, a|
+						format!("{}{}{}__{}",
+							acc,
+							if acc.is_empty() { "___" } else { "" },
+							a.name,
+							self.compile_type_name(a.r#type.clone(), None).replace(" ", "_")
+						)
+					);
+					let member_declarations = s.iter().fold("".to_string(), |acc, a|
+						format!("{}\n{};",
+							acc,
+							self.compile_type_name(a.r#type.clone(), Some(a.name.clone()))
+						)
+					);
+
+					if !self.type_map.contains_key(&Struct(s.clone())) {
+						self.global_defs += &format!("struct {} {{{}\n}};\n", name, member_declarations);
+						self.type_map.insert(Struct(s.clone()), format!("struct {}", name));
+					}
+
+					&self.type_map[&Struct(s)]
+				}
+
+				_ => panic!("aaaa i cant make type {:#?}", t)
+			}.to_string(),
+
+			match name {
+				Some(s) => format!(" {}", mk_id(s)),
+				None => "".to_string()
+			}
+		)
+	}
+
+	fn compile_literal(&mut self, lit: Literal) -> String {
+		match lit {
+			AtomicLiteral(atomic) => compile_atomic(atomic),
+			StructLiteral(s) => {
+				let s_t = Struct(
+					s.iter().map(|a|
+						AggregateType {
+							name: a.name.clone(),
+							r#type: a.val.r#type.clone(),
+						}
+					).collect()
+				);
+
+				let s_vals =
+					s.iter()
+						.map(|a| a.val.clone())
+						.fold("".to_string(), |acc, e|
+							format!("{}{}{}",
+								acc,
+								if acc.is_empty() { "" } else { ", " },
+								self.compile_expr(e)
+							)
+						);
+
+				format!("({}) {{ {} }}",
+					self.compile_type_name(s_t, None),
+					s_vals
+				)
+			}
+		}
+	}
 }
 
-fn compile_literal(lit: TokenLiteral) -> String {
+fn compile_atomic(lit: TokenLiteral) -> String {
 	match lit {
 		IntLit(i) => format!("{}", i),
 		FltLit(f) => format!("{}", f),
 		StrLit(s) => format!("\"{}\"", s),
-		BoolLit(b) => (if b {"1"} else {"0"}).to_string()
+		BoolLit(b) => (if b {"1"} else {"0"}).to_string(),
 	}
 }
 
 fn compile_trivial(tr: Expr) -> String {
 	match tr.val {
-		ExprVal::LiteralNode(lit) => compile_literal(lit),
+		ExprVal::LiteralNode(AtomicLiteral(atom)) =>
+			compile_atomic(atom),
 		ExprVal::IdentNode(id) => mk_id(id),
 		_ => panic!("trivial is not trivial")
 	}
 }
 
-fn compile_type_name(t: Type, name: Option<String>) -> String {
-	format!("{}{}",
-		match t {
-			Void => "void",
-			Int => "long long int",
-			Float => "long double",
-			Str => "char*",
-			Bool => "char",
-			TypeConstructor(mut tc) if tc.name == "Function" => {
-				let ret_t = tc.args.pop().unwrap();
-				return format!("{} (*{})({})",
-					compile_type_name(ret_t, None),
-					if name.is_some() { name.unwrap() } else { "".to_string() },
-					tc.args.into_iter()
-						.map(|t| compile_type_name(t, None))
-						.reduce(|acc, next| acc + ", " + &next)
-						.unwrap_or_else(|| "void".to_string())
-				);
-			}
-			_ => panic!("aaaa i cant make type {:#?}", t)
-		}.to_string(),
-
-		if name.is_some() { " ".to_string() + &name.unwrap() } else { "".to_string() }
-	)
-}
-
 fn mk_id(s: String) -> String {
-// TODO: not all genlang names are valid C names! fix!
+// TODO: not all brevis names are valid C names! fix!
 	format!("_{}", s)
 }

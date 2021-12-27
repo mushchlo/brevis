@@ -1,7 +1,38 @@
+use cradle::SourcePos;
+
+#[derive(Debug, Clone)]
+pub struct Token {
+	pub val: TokenValue,
+	pub start: SourcePos,
+	pub end: SourcePos,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum TokenValue {
+	UnaryOp(OpID),
+	BinaryOp(OpID),
+	AssignOp(OpID),
+	KeyWord(KeyWord),
+	Ident(String),
+	Punc(char),
+	Literal(TokenLiteral),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum TokenLiteral {
+	StrLit(String),
+	IntLit(i64),
+	FltLit(f64),
+	BoolLit(bool),
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum OpID {
 	// assignment
 	Eq,
+
+	// lookup member of structure
+	Member,
 
 	// string concatenation
 	Concat,
@@ -73,15 +104,5 @@ pub const BINARY_OP_DICT: &[(OpID, &str)] = &[
 	(Doeq, "=="),
 	(Noteq, "!="),
 	(InfixFn, "`"),
+	(Member, "."),
 ];
-
-use crate::ast::Type;
-
-pub fn binary_op_result_type(op: OpID, t_left: Type, t_right: Type) -> Type {
-	match op {
-		Eq | Add | Sub | Mul | Div | Mod | Concat => t_left,
-		Doeq | Noteq | Gt | Lt | Gteq | Lteq | And | Or | Xor => Type::Bool,
-
-		_ => panic!("Operator {:?} does not apply to types {:#?} and {:#?}", op, t_left, t_right)
-	}
-}

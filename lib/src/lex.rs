@@ -2,38 +2,20 @@ use peeking_take_while::PeekableExt;
 use std::collections::VecDeque;
 
 use cradle::{CharsPos, CharsPosition, SourcePos};
-use tok::{KeyWord, OpID, OpID::*, KEYWORD_DICT, BINARY_OP_DICT};
 
-#[derive(Debug, Clone)]
-pub struct Token {
-	pub val: TokenValue,
-	pub start: SourcePos,
-	pub end: SourcePos,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum TokenValue {
-	UnaryOp(OpID),
-	BinaryOp(OpID),
-	AssignOp(OpID),
-	KeyWord(KeyWord),
-	Ident(String),
-	Punc(char),
-	Literal(TokenLiteral),
-}
-use self::TokenValue::*;
+use tok::{
+	Token,
+	TokenValue,
+	TokenValue::*,
+	TokenLiteral,
+	TokenLiteral::*,
+	OpID::*,
+	KEYWORD_DICT,
+	BINARY_OP_DICT,
+};
 
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum TokenLiteral {
-	StrLit(String),
-	IntLit(i64),
-	FltLit(f64),
-	BoolLit(bool),
-}
-use self::TokenLiteral::*;
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TokenStream(pub VecDeque<Token>);
 
 pub fn lex(s: String) -> TokenStream {
@@ -227,7 +209,6 @@ fn map_keyword(kwstr: String) -> TokenValue {
 fn map_op(opstr: String, prev_op: Option<&TokenValue>) -> TokenValue {
 	match opstr.as_str() {
 		"!" => UnaryOp(Not),
-		":" => Punc(':'),
 		"-" if !matches!(prev_op, Some(Literal(_))) && !matches!(prev_op, Some(Ident(_))) => {
 			UnaryOp(Minus)
 		}
@@ -274,11 +255,11 @@ fn un_escape(str: String) -> String {
 }*/
 
 fn is_op_char(c: char) -> bool {
-	"`|+-*/:=!~<>%".contains(&c.to_string())
+	".`|+-*/=!~<>%".contains(&c.to_string())
 }
 
 fn is_punc_char(c: char) -> bool {
-	",;{}()".contains(&c.to_string())
+	",;:[]{}()".contains(&c.to_string())
 }
 
 fn is_special_char(c: char) -> bool {
