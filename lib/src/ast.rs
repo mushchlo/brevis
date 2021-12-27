@@ -115,9 +115,3 @@ pub struct TConstructor {
 	pub name: String,
 	pub args: Vec<Type>,
 }
-
-#[derive(Clone, Debug)]
-pub struct FuncType {
-	args: Vec<Type>,
-	returned: Box<Type>,
-}
