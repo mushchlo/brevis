@@ -19,6 +19,11 @@ pub fn core_vals() -> HashMap<String, Type> {
 				name: "Function".to_string(),
 				args: vec![Type::Int, Type::Str]
 			}),
+		"ftoa".to_string() =>
+			Type::TypeConstructor(TConstructor {
+				name: "Function".to_string(),
+				args: vec![Type::Float, Type::Str]
+			}),
 	}
 }
 
@@ -28,11 +33,7 @@ function _print(s) {
 	buffered += String(s);
 }
 var _itoa = String;
-"#;
-
-pub const CORE_FNS_PY: &str =
-r#"_print = lambda s: print(s, end="")
-_itoa = lambda i: str(i)
+var _ftoa = String;
 "#;
 
 pub const CORE_FNS_9: &str =
@@ -44,14 +45,21 @@ void _print(char* s){ print("%s", s); }
 char*
 _itoa(vlong val)
 {
-	smprint("%lld", val);
+	return smprint("%lld", val);
+}
+
+char*
+_ftoa(long double d)
+{
+	return smprint("%llf", d);
 }
 
 char*
 concat(char* s1, char* s2)
 {
-	smprint("%s%s", s1, s2);
-}"#;
+	return smprint("%s%s", s1, s2);
+}
+"#;
 
 pub const CORE_FNS_POSIX: &str =
 r#"#include <stdio.h>
@@ -75,6 +83,16 @@ _itoa(long long int val)
 
 	return &buf[i+1];
 }
+
+char*
+_ftoa(long double n)
+{
+	char *buf = malloc(50);
+	snprintf(buf, 50, "%llf", n);
+
+	return buf;
+}
+
 char*
 concat(const char *s1, const char *s2)
 {

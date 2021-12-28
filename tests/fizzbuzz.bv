@@ -1,5 +1,5 @@
-let fizzbuzz := fn (n, accumulator) {
-	accumulator :=
+let fizzbuzz = fn (n, accumulator) {
+	accumulator =
 		(if n % 3 == 0 and n % 5 == 0 {
 			"Fizzbuzz\n"
 		} else if n % 3 == 0 {
@@ -16,4 +16,4 @@ let fizzbuzz := fn (n, accumulator) {
 	}
 };
 
-fizzbuzz(100);
+print(fizzbuzz(100, ""));

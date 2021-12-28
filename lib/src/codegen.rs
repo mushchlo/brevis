@@ -153,35 +153,22 @@ impl Compilation {
 	pub fn compile(&mut self, a: AST) -> String {
 		match a {
 			AST::LetNode(l) => {
-				let c_type_name =
-					match l.var.r#type {
-						TypeConstructor(mut tc) if tc.name == "Function" => {
-							let ret_t = tc.args.pop().unwrap();
-							let args_t = tc.args.iter()
-												.map(|t| self.compile_type_name(t.clone(), None))
-												.reduce(|acc, next| acc + ", " + &next)
-												.unwrap_or_else(|| "".to_string());
-							if let Some(box Expr {
-								val: LambdaNode(lambda),
-								..
-							}) = l.def {
-								self.compile_lambda(lambda, mk_id(l.var.name));
-								return "".to_string();
-							}
-							format!("{} (*{})({})",
-								self.compile_type_name(ret_t, None),
-								mk_id(l.var.name.clone()),
-								args_t
-							)
+				let c_type_name = self.compile_type_name(l.var.r#type, Some(l.var.name.clone()));
+				let def_str =
+					match l.def {
+						Some(box Expr {
+							val: LambdaNode(lambda),
+							..
+						}) => {
+							let c_fn = self.compile_lambda(lambda, Some(&c_type_name));
+							format!("{} = {}", mk_id(l.var.name), c_fn)
 						}
 
-						t => format!("{} {}", self.compile_type_name(t, None), mk_id(l.var.name.clone()))
-					};
-				let def_str =
-					if let Some(box expr) = l.def {
-						format!("{} = {}", mk_id(l.var.name), self.compile_expr(expr))
-					} else {
-						"".to_string()
+						Some(box expr) =>
+							format!("{} = {}", mk_id(l.var.name), self.compile_expr(expr)),
+
+						_ =>
+							"".to_string()
 					};
 				let prev_context = self.fn_context.pop().unwrap();
 				self.fn_context.push(
@@ -195,23 +182,30 @@ impl Compilation {
 		}
 	}
 
-	fn compile_lambda(&mut self, l: Lambda, mut name: String) -> String {
+// type_name is used for functions that are named, and therefore can recurse,
+// so that they can have their own name defined at the top of the function.
+	fn compile_lambda(&mut self, l: Lambda, type_name: Option<&str>) -> String {
 		let return_t = l.body.r#type.clone();
 		let args_str = l.args.iter()
 							.map(|v| self.compile_type_name(v.r#type.clone(), Some(v.name.clone())))
 							.reduce(|acc, next| acc + ", " + &next)
 							.unwrap_or_else(|| "void".to_string());
-		if name.is_empty() {
-			 name = lambda_name();
-		}
+		let fn_name = lambda_name();
+
 		self.fn_context.push("".to_string());
 		let c_body = self.compile_expr(*l.body);
 		let declarations = self.fn_context.pop();
 		let fn_declaration =
-			&format!("{}\n{}({})\n{{\n{}{}{};\n}}\n",
+			&format!("{}\n{}({})\n{{\n{}{}{}{};\n}}\n",
 				self.compile_type_name(return_t.clone(), None),
-				name,
+				fn_name,
 				args_str,
+
+				match type_name {
+					Some(name) => format!("{} = {};\n", name, fn_name),
+					None => "".to_string(),
+				},
+
 				declarations.unwrap(),
 
 				if return_t != Void {
@@ -221,7 +215,8 @@ impl Compilation {
 				c_body
 			);
 		self.global += fn_declaration;
-		name
+
+		fn_name
 	}
 
 
@@ -247,7 +242,7 @@ impl Compilation {
 							),
 
 			LambdaNode(l) =>
-				self.compile_lambda(l, "".to_string()),
+				self.compile_lambda(l, None),
 
 			IfNode(ifelse) =>
 				format!("({}) ? ({}) : ({})",
@@ -319,7 +314,7 @@ impl Compilation {
 					let ret_t = tc.args.pop().unwrap();
 					return format!("{} (*{})({})",
 						self.compile_type_name(ret_t, None),
-						if name.is_some() { name.unwrap() } else { "".to_string() },
+						if name.is_some() { mk_id(name.unwrap()) } else { "".to_string() },
 						tc.args.into_iter()
 							.map(|t| self.compile_type_name(t, None))
 							.reduce(|acc, next| acc + ", " + &next)

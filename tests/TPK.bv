@@ -1,9 +1,5 @@
-let ftoa: fn(float)(string);
-
-let id := fn(x: 'a){ x };
-
-let sqrt := fn(num) {
-	let aux := fn(n, root, precision) {
+let sqrt = fn(num) {
+	let aux = fn(n, root, precision) {
 		if (root - n/root) < precision {
 			root
 		} else {
@@ -14,21 +10,21 @@ let sqrt := fn(num) {
 	aux(num, num, 0.0001)
 };
 
-let pow := fn(n, exp) {
-	let aux := fn(acc, curr_exp) {
+let pow = fn(n, exp) {
+	let aux = fn(base, acc, curr_exp) {
 		if curr_exp == 0 {
 			1.0
 		} else if curr_exp == 1 {
 			acc
 		} else {
-			aux(acc*n, curr_exp-1)
+			aux(base, acc*base, curr_exp-1)
 		}
 	};
 
-	aux(1.0, exp)
+	aux(n, 1.0, exp)
 };
 
-let abs := fn(x) {
+let abs = fn(x) {
 	if x < 0.0 {
 		-x
 	} else {
@@ -36,12 +32,12 @@ let abs := fn(x) {
 	}
 };
 
-let f := fn(t) {
+let f = fn(t) {
 	sqrt(abs(t)) + 5.0 * pow(t, 3)
 };
 
-let TPK := fn(n) {
-	let val := f(n);
+let TPK = fn(n) {
+	let val = f(n);
 	print(ftoa(n) ~ " " ~
 		(if val > 400.0 {
 			"TOO LARGE"

@@ -51,5 +51,5 @@ pub fn compile_c(s: String, core_fns: &str) -> String {
 
     let mut compiler = Compilation::new();
     let compiled = compiler.compile_expr(parsed_anf);
-	format!("{}\n{}\n{}\nvoid\nmain(void)\n{{\n{}\n{};\n}}", core_fns, compiler.global_defs, compiler.global, compiler.fn_context.pop().unwrap(), compiled)
+	format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}", core_fns, compiler.global_defs, compiler.fn_context.pop().unwrap(), compiler.global, compiled)
 }
