@@ -3,6 +3,7 @@ use ast::{
 	Binary,
 	ExprVal,
 	Type,
+	Type::*,
 	AggregateType,
 };
 use tok::{
@@ -18,32 +19,31 @@ impl Binary {
 			Eq | Doeq | Noteq => vec![ Constraint::Equal(left_t, right_t) ],
 			Gt | Lt | Gteq | Lteq => vec![
 				Constraint::Equal(left_t, right_t),
-//				Constraint::In(left_t.clone(), vec![ Type::Int, Type::Float ])
+//				Constraint::In(left_t.clone(), vec![ Int, Float) ])
 			],
 
 			And | Or | Xor => vec![
-				Constraint::Equal(left_t.clone(), right_t),
-				Constraint::Equal(left_t, Type::Bool)
+				Constraint::Equal(left_t, right_t),
 			],
 
 			Add | Sub | Mul | Div => vec![
 				Constraint::Equal(left_t, right_t),
-//				Constraint::In(left_t.clone(), vec![ Type::Int, Type::Float ])
+//				Constraint::In(left_t.clone(), vec![ Int, Float ])
 			],
 
 			Mod => vec![
 				Constraint::Equal(left_t, right_t.clone()),
-				Constraint::Equal(right_t, Type::Int)
+				Constraint::Equal(right_t, Int)
 			],
 
 			Concat => vec![
 				Constraint::Equal(left_t.clone(), right_t),
-				Constraint::Equal(left_t, Type::Str)
+				Constraint::Equal(left_t, Str)
 			],
 
 			Member => {
 				let name = match &self.right.val {
-					ExprVal::IdentNode(s) => s.clone(),
+					ExprVal::VarNode(s) => s.name.clone(),
 					_ => panic!("unreachable")
 				};
 

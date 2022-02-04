@@ -1,30 +1,24 @@
-extern crate maplit;
-
-use maplit::hashmap;
 use std::collections::HashMap;
 use crate::ast::{
 	Type,
+	Type::*,
 	TConstructor
 };
 
 pub fn core_vals() -> HashMap<String, Type> {
-	hashmap! {
-		"print".to_string() =>
+	[
+		("print", vec![Str, Void]),
+		("itoa", vec![Int, Str]),
+		("ftoa", vec![Float, Str]),
+	].iter().map(|(name, args)|
+		(
+			name.to_string(),
 			Type::TypeConstructor(TConstructor {
 				name: "Function".to_string(),
-				args: vec![Type::Str, Type::Void]
-			}),
-		"itoa".to_string() =>
-			Type::TypeConstructor(TConstructor {
-				name: "Function".to_string(),
-				args: vec![Type::Int, Type::Str]
-			}),
-		"ftoa".to_string() =>
-			Type::TypeConstructor(TConstructor {
-				name: "Function".to_string(),
-				args: vec![Type::Float, Type::Str]
-			}),
-	}
+				args: args.clone(),
+			})
+		)
+	).collect()
 }
 
 pub const CORE_FNS_JS: &str =

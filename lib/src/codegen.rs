@@ -3,10 +3,12 @@ use maplit::hashmap;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::iter;
 
 use ast::{
 	*,
 	ExprVal::*,
+	Type,
 	Type::*,
 	Literal::*,
 };
@@ -79,8 +81,8 @@ pub fn compile_expr_js(e: Expr) -> String {
 			compile_atomic(atom),
 		LiteralNode(StructLiteral(_s)) =>
 			panic!("structs not yet implemented for js backend"),
-		IdentNode(id) =>
-			mk_id(id),
+		VarNode(v) =>
+			mk_id(v.name),
 		BlockNode(b) =>
 			format!("({})",
 				b.iter()
@@ -153,7 +155,7 @@ impl Compilation {
 	pub fn compile(&mut self, a: AST) -> String {
 		match a {
 			AST::LetNode(l) => {
-				let c_type_name = self.compile_type_name(l.var.r#type, Some(l.var.name.clone()));
+				let c_type_name = self.compile_type_name(l.var.r#type, mk_id(l.var.name.clone()), true);
 				let def_str =
 					match l.def {
 						Some(box Expr {
@@ -174,7 +176,7 @@ impl Compilation {
 				self.fn_context.push(
 					format!("{}{};\n", prev_context, c_type_name)
 				);
-				format!("{}\n", def_str)
+				def_str + "\n"
 			}
 
 			AST::ExprNode(e) =>
@@ -185,21 +187,24 @@ impl Compilation {
 // type_name is used for functions that are named, and therefore can recurse,
 // so that they can have their own name defined at the top of the function.
 	fn compile_lambda(&mut self, l: Lambda, type_name: Option<&str>) -> String {
-		let return_t = l.body.r#type.clone();
-		let args_str = l.args.iter()
-							.map(|v| self.compile_type_name(v.r#type.clone(), Some(v.name.clone())))
-							.reduce(|acc, next| acc + ", " + &next)
-							.unwrap_or_else(|| "void".to_string());
+		let args_t =
+			l.args.iter()
+				.map(|a| a.r#type.clone())
+				.chain(iter::once(l.body.r#type.clone()))
+				.collect::<Vec<_>>();
+		let args_names =
+			l.args.into_iter()
+				.map(|a| a.name)
+				.collect();
 		let fn_name = lambda_name();
+		let return_t = l.body.r#type.clone();
 
 		self.fn_context.push("".to_string());
 		let c_body = self.compile_expr(*l.body);
 		let declarations = self.fn_context.pop();
 		let fn_declaration =
-			&format!("{}\n{}({})\n{{\n{}{}{}{};\n}}\n",
-				self.compile_type_name(return_t.clone(), None),
-				fn_name,
-				args_str,
+			format!("{}\n{{\n{}{}{}{};\n}}\n",
+				self.compile_fn_type(args_t, fn_name.clone(), args_names),
 
 				match type_name {
 					Some(name) => format!("{} = {};\n", name, fn_name),
@@ -214,7 +219,7 @@ impl Compilation {
 
 				c_body
 			);
-		self.global += fn_declaration;
+		self.global += &fn_declaration;
 
 		fn_name
 	}
@@ -225,7 +230,7 @@ impl Compilation {
 			LiteralNode(lit) =>
 				self.compile_literal(lit),
 
-			IdentNode(id) => mk_id(id),
+			VarNode(v) => mk_id(v.name),
 
 			BlockNode(b) => format!("({})", b.iter()
 												.filter_map(|box l| {
@@ -301,8 +306,13 @@ impl Compilation {
 		}
 	}
 
-	fn compile_type_name(&mut self, t: Type, name: Option<String>) -> String {
-		format!("{}{}",
+	fn compile_type_name(
+		&mut self,
+		t: Type,
+		name: String,
+		fns_as_ptrs: bool
+	) -> String {
+		format!("{}{}{}",
 			match t {
 				Void => "void",
 				Int => "long long int",
@@ -310,38 +320,31 @@ impl Compilation {
 				Str => "char*",
 				Bool => "char",
 
-				TypeConstructor(mut tc) if tc.name == "Function" => {
-					let ret_t = tc.args.pop().unwrap();
-					return format!("{} (*{})({})",
-						self.compile_type_name(ret_t, None),
-						if name.is_some() { mk_id(name.unwrap()) } else { "".to_string() },
-						tc.args.into_iter()
-							.map(|t| self.compile_type_name(t, None))
-							.reduce(|acc, next| acc + ", " + &next)
-							.unwrap_or_else(|| "void".to_string())
+				TypeConstructor(tc) if tc.name == "Function" => {
+					return self.compile_fn_type(
+						tc.args,
+						if fns_as_ptrs && !name.is_empty() {
+							format!("(*{})", name)
+						} else {
+							name
+						},
+						vec![]
 					);
 				}
 
 				Struct(mut s) => {
 					s.sort();
-					let name = s.iter().fold("".to_string(), |acc, a|
-						format!("{}{}{}__{}",
-							acc,
-							if acc.is_empty() { "___" } else { "" },
-							a.name,
-							self.compile_type_name(a.r#type.clone(), None).replace(" ", "_")
-						)
-					);
 					let member_declarations = s.iter().fold("".to_string(), |acc, a|
 						format!("{}\n{};",
 							acc,
-							self.compile_type_name(a.r#type.clone(), Some(a.name.clone()))
+							self.compile_type_name(a.r#type.clone(), mk_id(a.name.clone()), true)
 						)
 					);
+					let s_name = type_hash(Struct(s.clone()));
 
 					if !self.type_map.contains_key(&Struct(s.clone())) {
-						self.global_defs += &format!("struct {} {{{}\n}};\n", name, member_declarations);
-						self.type_map.insert(Struct(s.clone()), format!("struct {}", name));
+						self.global_defs += &format!("struct {} {{{}\n}};\n", s_name, member_declarations);
+						self.type_map.insert(Struct(s.clone()), format!("struct {}", s_name));
 					}
 
 					&self.type_map[&Struct(s)]
@@ -350,11 +353,54 @@ impl Compilation {
 				_ => panic!("aaaa i cant make type {:#?}", t)
 			}.to_string(),
 
-			match name {
-				Some(s) => format!(" {}", mk_id(s)),
-				None => "".to_string()
-			}
+			if !name.is_empty() {
+				" "
+			} else {
+				""
+			},
+
+			name
 		)
+	}
+
+// Takes in the vector of the function's argument types,
+// ending with the return type.
+	fn compile_fn_type(&mut self,
+		mut args_t: Vec<Type>,
+		acc: String,
+		args_name: Vec<String>
+	) -> String {
+		let ret_t = args_t.pop().unwrap();
+		let args: Vec<(Type, String)> = if !args_name.is_empty() {
+			args_t.into_iter()
+				.zip(args_name.into_iter())
+				.collect()
+		} else {
+			args_t.into_iter()
+				.zip(iter::repeat(String::new()))
+				.collect()
+		};
+		let compiled_args =
+			args.into_iter()
+				.map(|(t, name)|
+					self.compile_type_name(t, mk_id(name), false)
+				)
+				.reduce(|acc, next| acc + ", " + &next)
+				.unwrap();
+		match ret_t {
+			TypeConstructor(tc) if &tc.name == "Function" => {
+				let compiled = format!("{}({})",
+					acc,
+					compiled_args
+				);
+				self.compile_fn_type(tc.args, compiled, vec![])
+			}
+			_ => format!("{} {}({})",
+				self.compile_type_name(ret_t, "".to_string(), true),
+				acc,
+				compiled_args
+			)
+		}
 	}
 
 	fn compile_literal(&mut self, lit: Literal) -> String {
@@ -382,7 +428,7 @@ impl Compilation {
 						);
 
 				format!("({}) {{ {} }}",
-					self.compile_type_name(s_t, None),
+					self.compile_type_name(s_t, "".to_string(), true),
 					s_vals
 				)
 			}
@@ -403,12 +449,44 @@ fn compile_trivial(tr: Expr) -> String {
 	match tr.val {
 		ExprVal::LiteralNode(AtomicLiteral(atom)) =>
 			compile_atomic(atom),
-		ExprVal::IdentNode(id) => mk_id(id),
+		ExprVal::VarNode(v) => mk_id(v.name),
 		_ => panic!("trivial is not trivial")
 	}
 }
 
 fn mk_id(s: String) -> String {
 // TODO: not all brevis names are valid C names! fix!
-	format!("_{}", s)
+	if s.is_empty() {
+		s
+	} else {
+		format!("_{}", s)
+	}
+}
+
+// Expects a concrete type (all types should be monomorphized by now),
+// generates a hashed name for a type, used for monomorphized functions
+fn type_hash(t: Type) -> String {
+	match t {
+		Void => "v".to_string(),
+		Int => "i".to_string(),
+		Float => "f".to_string(),
+		Str => "s".to_string(),
+		Bool => "b".to_string(),
+		Struct(s) =>
+			format!("struct__{}__",
+				s.iter()
+					.map(|agg| type_hash(agg.r#type.clone()) + "_" + &agg.name)
+					.reduce(|acc, next| acc + "_" + &next)
+					.unwrap()
+			),
+		TypeConstructor(tc) =>
+			format!("tc_{}__{}__",
+				tc.name,
+				tc.args.iter()
+					.map(|t| type_hash(t.clone()))
+					.reduce(|acc, next| acc + "_" + &next)
+					.unwrap()
+			),
+		TypeVar(_) => panic!(),
+	}
 }

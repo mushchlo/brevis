@@ -36,8 +36,8 @@ pub fn anfify_expr(e: Expr) -> Expr {
 		val:
 			match e.val {
 				LiteralNode(lit) => LiteralNode(lit),
-				IdentNode(id) =>
-					IdentNode(id),
+				VarNode(v) =>
+					VarNode(v),
 				IfNode(i) =>
 					IfNode(IfElse {
 						cond: box anfify_expr(*i.cond),
@@ -51,6 +51,7 @@ pub fn anfify_expr(e: Expr) -> Expr {
 				LambdaNode(l) =>
 					LambdaNode(Lambda {
 						args: l.args.clone(),
+						generics: l.generics.clone(),
 						body: Box::new(anfify_expr(*l.body))
 					}),
 				UnaryNode(u) =>
@@ -69,15 +70,15 @@ pub fn anfify_expr(e: Expr) -> Expr {
 					let mut trivial_args = VecDeque::new();
 					for arg in c.args.iter() {
 						trivial_args.push_back(match arg.val.clone() {
-							LiteralNode(_) | IdentNode(_) => arg.clone(),
+							LiteralNode(_) | VarNode(_) => arg.clone(),
 
 							_ => {
-								let id = unique_name();
+								let name = unique_name();
 								block.push_back(Box::new(
 									LetNode(Let {
 										var:
-											Variable {
-												name: id.clone(),
+											Parameter {
+												name: name.clone(),
 												r#type: arg.r#type.clone()
 											},
 										def:
@@ -87,7 +88,12 @@ pub fn anfify_expr(e: Expr) -> Expr {
 									})
 								));
 								Expr {
-									val: IdentNode(id),
+									val: VarNode(
+										Variable {
+											name,
+											generics: vec![],
+										}
+									),
 									r#type: arg.r#type.clone()
 								}
 							}
@@ -97,6 +103,7 @@ pub fn anfify_expr(e: Expr) -> Expr {
 						Box::new(ExprNode(Expr {
 							val: CallNode(Call {
 								args: trivial_args,
+							//	type_args: Vec::new(),
 								func: Box::new(anfify_expr(*c.func))
 							}),
 							r#type: e.r#type

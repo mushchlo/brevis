@@ -113,7 +113,7 @@ impl TokenStream {
 
 		Expr {
 			val: ExprVal::BlockNode(parsed),
-			r#type: Void,
+			r#type: get_type_var(),
 		}
 	}
 
@@ -174,29 +174,53 @@ impl TokenStream {
 					if curr_prec > prev_prec {
 						self.next();
 						let right_expr =
-							if tok.val == BinaryOp(Member) {
-								if let Some(tok) = self.peek() {
-									match tok.val {
-										Ident(member) => {
-											self.skip_token(Ident(member.clone()));
-											new_expr(IdentNode(member))
-										}
+							if curr_op == OpID::Member {
+								self.maybe_call(|s|
+									ExprNode(if let Some(tok) = s.peek() {
+										match tok.val {
+											Ident(member) => {
+												s.skip_token(Ident(member.clone()));
+												new_expr(
+													VarNode(
+														Variable {
+															name: member,
+															generics: vec![],
+														}
+													)
+												)
+											}
 
-										_ => panic!("At {}, the dot operator was used with a non-identifier RHS argument.", tok.start)
-									}
-								} else {
-									panic!("Expected a RHS argument for the dot operator, found EOF");
-								}
+											_ => panic!("At {}, the dot operator was used with a non-identifier RHS argument.", tok.start)
+										}
+									} else {
+										panic!("Expected a RHS argument for the dot operator, found EOF");
+									})
+								).expect_expr()
 							} else {
 								let tmp = self.parse_atom().expect_expr();
 								self.maybe_binary(tmp, curr_prec)
 							};
 
-						let parsed = new_expr(BinaryNode(Binary {
-							left: Box::new(left_expr),
-							right: Box::new(right_expr),
-							op: curr_op,
-						}));
+						let parsed = new_expr(
+							match right_expr.val.clone() {
+								CallNode(c) if curr_op == Member => {
+									CallNode(Call {
+										args: c.args,
+										func: box new_expr(BinaryNode(Binary {
+											left: box left_expr,
+											right: c.func,
+											op: curr_op,
+										})),
+									})
+								}
+								_ =>
+									BinaryNode(Binary {
+										left: Box::new(left_expr),
+										right: Box::new(right_expr),
+										op: curr_op,
+									}),
+							}
+						);
 
 						return self.maybe_binary(parsed, prev_prec);
 					}
@@ -239,7 +263,12 @@ impl TokenStream {
 			Ident(_) => {
 				let id = s.parse_id();
 				ExprNode(Expr {
-					val: IdentNode(id.clone()),
+					val: VarNode(
+						Variable {
+							name: id.clone(),
+							generics: vec![],
+						}
+					),
 					r#type: type_of(&id).unwrap()
 				})
 			}
@@ -304,7 +333,7 @@ impl TokenStream {
 		parsed
 	}
 
-	fn declare_var(&mut self) -> Variable {
+	fn declare_var(&mut self) -> Parameter {
 		if let Some(Token {
 			val: Ident(id),
 			start: pos,
@@ -325,7 +354,7 @@ impl TokenStream {
 				}
 				_ => get_type_var(),
 			};
-			let var = Variable {
+			let var = Parameter {
 				name: id,
 				r#type: var_type,
 			};
@@ -425,6 +454,7 @@ impl TokenStream {
 		var_types_new_stack();
 		let lambda_expr = new_expr_ast(LambdaNode(Lambda {
 				args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
+				generics: vec![],
 				body: Box::new(self.parse_expr()),
 			}));
 		var_types_pop_stack();
@@ -479,6 +509,7 @@ impl TokenStream {
 	}
 
 	fn parse_type(&mut self) -> Type {
+// TODO: generic types should actually be parseable, i.e. syntax for them should be defined and implemented for λ's.
 		match self.next() {
 			Some(tok) => match tok.val {
 				KeyWord(kw) => match kw {
@@ -574,10 +605,7 @@ pub fn get_type_var() -> Type {
 }
 
 fn new_expr_ast(value: ExprVal) -> AST {
-	ExprNode(Expr {
-		val: value,
-		r#type: get_type_var(),
-	})
+	ExprNode(new_expr(value))
 }
 
 fn new_expr(value: ExprVal) -> Expr {

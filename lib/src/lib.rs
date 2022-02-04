@@ -2,6 +2,7 @@
 #![feature(box_syntax)]
 #![feature(destructuring_assignment)]
 
+use std::collections::HashMap;
 use crate::{
 	lex::lex,
 	anf::anfify_expr,
@@ -27,6 +28,7 @@ mod op;
 mod unify;
 mod anf;
 mod codegen;
+mod monomorphize;
 pub mod core;
 
 
@@ -46,10 +48,11 @@ pub fn compile_c(s: String, core_fns: &str) -> String {
 	let mut lexed = lex(s);
 	let mut parsed = lexed.parse();
 	parsed.annotate();
+	parsed.monomorphize(&mut vec![HashMap::new()], &mut HashMap::new());
 
 	let parsed_anf = anfify_expr(parsed);
 
     let mut compiler = Compilation::new();
     let compiled = compiler.compile_expr(parsed_anf);
-	format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}", core_fns, compiler.global_defs, compiler.fn_context.pop().unwrap(), compiler.global, compiled)
+   	format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}", core_fns, compiler.global_defs, compiler.fn_context.pop().unwrap(), compiler.global, compiled)
 }

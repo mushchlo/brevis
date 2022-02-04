@@ -23,7 +23,7 @@ pub struct Expr {
 pub enum ExprVal {
 	LiteralNode(Literal),
 
-	IdentNode(String),
+	VarNode(Variable),
 	BlockNode(VecDeque<Box<AST>>),
 	LambdaNode(Lambda),
 	IfNode(IfElse),
@@ -43,6 +43,12 @@ pub enum Literal {
 pub struct Aggregate {
 	pub name: String,
 	pub val: Expr,
+}
+
+#[derive(Clone, Debug)]
+pub struct Variable {
+	pub name: String,
+	pub generics: Vec<Type>,
 }
 
 #[derive(Clone, Debug)]
@@ -67,12 +73,13 @@ pub struct Unary {
 
 #[derive(Clone, Debug)]
 pub struct Lambda {
-	pub args: VecDeque<Variable>,
+	pub args: VecDeque<Parameter>,
+	pub generics: Vec<u16>,
 	pub body: Box<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash)]
-pub struct Variable {
+pub struct Parameter {
 	pub name: String,
 	pub r#type: Type,
 }
@@ -85,8 +92,14 @@ pub struct Call {
 
 #[derive(Clone, Debug)]
 pub struct Let {
-	pub var: Variable,
+	pub var: Parameter,
 	pub def: Option<Box<Expr>>,
+}
+
+#[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash, PartialOrd, Ord)]
+pub struct GenericType {
+	pub generics: Vec<u16>, // list of typevars
+	pub uninstantiated: Type, // a type that may contain those typevars
 }
 
 #[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash, PartialOrd, Ord)]
@@ -114,4 +127,14 @@ pub struct AggregateType {
 pub struct TConstructor {
 	pub name: String,
 	pub args: Vec<Type>,
+}
+
+
+impl GenericType {
+	pub fn new(t: Type) -> Self {
+		GenericType {
+			uninstantiated: t,
+			generics: Vec::new(),
+		}
+	}
 }

@@ -24,6 +24,7 @@ fn main() {
 
 	let contents = fs::read_to_string(env::args().last().unwrap()).expect("failed to open/read file");
 	println!("{}", compile(contents));
+
 }
 
 #[cfg(test)]
