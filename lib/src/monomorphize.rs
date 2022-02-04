@@ -110,6 +110,15 @@ impl Expr {
 				for line in b.iter_mut() {
 					line.monomorphize(fns, monomorphized_fns);
 				}
+				*b = b.clone().into_iter()
+					.filter(|line|
+						match line {
+							box AST::LetNode(l) =>
+								!fns.last().unwrap().contains_key(&l.var.name),
+							_ => true
+						}
+					)
+					.collect::<VecDeque<_>>();
 
 				let local_fn_declarations = fns.pop().unwrap();
 
