@@ -112,10 +112,10 @@ impl TokenStream {
 			    HashMap::new()
 		    ];
 	    TYPE_DICT.lock().unwrap().clear();
-		let mut parsed = VecDeque::<Box<AST>>::new();
+		let mut parsed = VecDeque::<AST>::new();
 
 		while self.peek().is_some() {
-			parsed.push_back(Box::new(self.parse_node()));
+			parsed.push_back(self.parse_node());
 			self.skip_token(Punc(';'));
 		}
 
@@ -416,13 +416,13 @@ impl TokenStream {
 	fn parse_block(&mut self) -> AST {
 		var_types_new_stack();
 		let parsed = self.delimited(Punc('{'), Punc('}'), Punc(';'), |s| {
-			Box::new(s.parse_node())
+			s.parse_node()
 		});
 		var_types_pop_stack();
 
 		match parsed.len() {
 			0 => panic!("empty block :/"),
-			1 => *parsed.front().unwrap().clone(),
+			1 => parsed.front().unwrap().clone(),
 			_ => new_expr_ast(BlockNode(parsed)),
 		}
 	}

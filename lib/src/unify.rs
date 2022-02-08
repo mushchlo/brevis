@@ -222,13 +222,13 @@ impl Inference {
 
 				let new_block: VecDeque<_> =
 					b.iter()
-						.map(|box line|
-							box self.infer_ast(line.clone(), constraints)
+						.map(|line|
+							self.infer_ast(line.clone(), constraints)
 						)
 						.collect();
 
 				let block_val_t = match new_block.back() {
-					Some(box AST::ExprNode(e)) => e.r#type.clone(),
+					Some(AST::ExprNode(e)) => e.r#type.clone(),
 					_ => Void
 				};
 				self.env.pop();

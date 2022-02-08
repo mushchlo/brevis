@@ -25,7 +25,7 @@ pub enum ExprVal {
 	LiteralNode(Literal),
 
 	VarNode(Variable),
-	BlockNode(VecDeque<Box<AST>>),
+	BlockNode(VecDeque<AST>),
 	LambdaNode(Lambda),
 	IfNode(IfElse),
 

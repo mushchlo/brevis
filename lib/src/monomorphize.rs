@@ -14,7 +14,6 @@ use ast::{
 	Parameter,
 	Variable,
 };
-
 use core::core_vals;
 
 
@@ -118,7 +117,7 @@ impl Expr {
 				*b = b.clone().into_iter()
 					.filter(|line|
 						match line {
-							box AST::LetNode(l) =>
+							AST::LetNode(l) =>
 								!fns.last().unwrap().contains_key(&l.var.name),
 							_ => true
 						}
@@ -137,7 +136,7 @@ impl Expr {
 						let (mut mono_fn, _) = local_fn_declarations[generic_name].clone();
 						mono_fn.annotate_helper(&instantiation.clone().into_iter().collect(), true);
 
-						box AST::LetNode(Let {
+						AST::LetNode(Let {
 							var: Parameter {
 								name: monomorphized_name.clone(),
 								r#type: mono_fn.r#type.clone(),

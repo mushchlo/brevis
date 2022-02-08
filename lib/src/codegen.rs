@@ -89,7 +89,7 @@ pub fn compile_expr_js(e: Expr) -> String {
 		BlockNode(b) =>
 			format!("({})",
 				b.iter()
-					.map(|box line| compile_js(line.clone()))
+					.map(|line| compile_js(line.clone()))
 					.reduce(|acc, next| acc + "," + &next)
 					.unwrap_or_else(|| "".to_string()),
 			),
@@ -239,7 +239,7 @@ impl Compilation {
 			BlockNode(b) =>
 				format!("({})",
 					b.iter()
-						.filter_map(|box l| {
+						.filter_map(|l| {
 							let res = self.compile(l.clone());
 							if res.trim().is_empty() {
 								None

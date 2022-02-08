@@ -46,7 +46,7 @@ pub fn anfify_expr(e: Expr) -> Expr {
 					}),
 				BlockNode(b) =>
 					BlockNode(
-						b.iter().map(|box line| box anfify(line.clone())).collect()
+						b.iter().map(|line| anfify(line.clone())).collect()
 					),
 				LambdaNode(l) =>
 					LambdaNode(Lambda {
@@ -74,7 +74,7 @@ pub fn anfify_expr(e: Expr) -> Expr {
 
 							_ => {
 								let name = unique_name();
-								block.push_back(Box::new(
+								block.push_back(
 									LetNode(Let {
 										var:
 											Parameter {
@@ -86,7 +86,7 @@ pub fn anfify_expr(e: Expr) -> Expr {
 												anfify_expr(arg.clone())
 											))
 									})
-								));
+								);
 								Expr {
 									val: VarNode(
 										Variable {
@@ -100,14 +100,14 @@ pub fn anfify_expr(e: Expr) -> Expr {
 						});
 					}
 					block.push_back(
-						Box::new(ExprNode(Expr {
+						ExprNode(Expr {
 							val: CallNode(Call {
 								args: trivial_args,
 							//	type_args: Vec::new(),
 								func: Box::new(anfify_expr(*c.func))
 							}),
 							r#type: e.r#type
-						}))
+						})
 					);
 
 					BlockNode(block)
