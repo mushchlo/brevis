@@ -18,20 +18,29 @@ use tok::{
 	KeyWord,
 	OpID,
 	OpID::*,
+	UOpID,
+	UOpID::*,
 };
 use core::core_vals;
 
 use lazy_static::lazy_static;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{
+	Arc,
+	Mutex,
+	atomic::{
+		AtomicU16,
+		Ordering,
+	},
+};
 
 lazy_static! {
 	static ref TYPE_DICT: Mutex<HashMap<&'static str, Type>> = Mutex::new(HashMap::new());
-	static ref TYPE_VAR_COUNTER: Mutex<u16> = Mutex::new(0);
+	static ref TYPE_VAR_COUNTER: Arc<AtomicU16> = Arc::new(AtomicU16::new(0));
 
 	static ref VAR_TYPES: Mutex<Vec<HashMap<String, Type>>> =
 		Mutex::new(vec![
-			core_vals(),
+			core_vals.clone(),
 			HashMap::new()
 		]);
 }
@@ -99,11 +108,10 @@ impl TokenStream {
 	pub fn parse(&mut self) -> Expr {
 	    *VAR_TYPES.lock().unwrap() =
 		    vec![
-			    core_vals(),
+			    core_vals.clone(),
 			    HashMap::new()
 		    ];
 	    TYPE_DICT.lock().unwrap().clear();
-		*TYPE_VAR_COUNTER.lock().unwrap() = 0;
 		let mut parsed = VecDeque::<Box<AST>>::new();
 
 		while self.peek().is_some() {
@@ -468,17 +476,13 @@ impl TokenStream {
 		}))
 	}
 
-	fn parse_unary(&mut self, op: OpID) -> AST {
+	fn parse_unary(&mut self, op: UOpID) -> AST {
 		self.skip_token(UnaryOp(op));
 		if let Some(tok) = self.peek() {
 			match tok.val {
-				UnaryOp(u) if u == op => {
-					self.skip_token(UnaryOp(op));
-					return self.parse_atom();
-				}
 				Literal(l) => {
 					self.skip_token(Literal(l.clone()));
-					if op == Minus {
+					if op == Neg {
 						return new_expr_ast(LiteralNode(match l {
 							IntLit(i) => AtomicLiteral(IntLit(-i)),
 							FltLit(f) => AtomicLiteral(FltLit(-f)),
@@ -570,6 +574,9 @@ impl TokenStream {
 					)
 				}
 
+				UnaryOp(Ref) =>
+					Type::Pointer(box self.parse_type()),
+
 				non_type => panic!("expected type, received {:?}", non_type),
 			},
 
@@ -599,9 +606,7 @@ fn precedence(id: OpID) -> i8 {
 }
 
 pub fn get_type_var() -> Type {
-	let type_var = *TYPE_VAR_COUNTER.lock().unwrap();
-	*TYPE_VAR_COUNTER.lock().unwrap() += 1;
-	Type::TypeVar(type_var)
+	Type::TypeVar(TYPE_VAR_COUNTER.fetch_add(1, Ordering::SeqCst))
 }
 
 fn new_expr_ast(value: ExprVal) -> AST {

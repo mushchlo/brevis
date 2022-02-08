@@ -10,6 +10,7 @@ use tok::{
 	TokenLiteral,
 	TokenLiteral::*,
 	OpID::*,
+	UOpID::*,
 	KEYWORD_DICT,
 	BINARY_OP_DICT,
 };
@@ -31,10 +32,9 @@ pub fn lex(s: String) -> TokenStream {
 				'0'..='9' => src.get_numlit(),
 				_ => {
 					if is_op_char(c) {
-						src.get_op(match tokstrm.back() {
-							Some(tok) => Some(&tok.val),
-							None => None,
-						})
+						src.get_op(
+							tokstrm.back().map(|tok| &tok.val)
+						)
 					} else if is_punc_char(c) {
 						src.make_token(|s| TokenValue::Punc(s.next().unwrap().1))
 					} else {
@@ -210,8 +210,10 @@ fn map_op(opstr: String, prev_op: Option<&TokenValue>) -> TokenValue {
 	match opstr.as_str() {
 		"!" => UnaryOp(Not),
 		"-" if !matches!(prev_op, Some(Literal(_))) && !matches!(prev_op, Some(Ident(_))) => {
-			UnaryOp(Minus)
+			UnaryOp(Neg)
 		}
+		"@" => UnaryOp(At),
+		"&" => UnaryOp(Ref),
 		"=" => AssignOp(Eq),
 		op => BinaryOp(
 			match_dict(BINARY_OP_DICT.iter().cloned(), op)
@@ -255,7 +257,7 @@ fn un_escape(str: String) -> String {
 }*/
 
 fn is_op_char(c: char) -> bool {
-	".`|+-*/=!~<>%".contains(&c.to_string())
+	".`|+-*/=!~<>%@&".contains(&c.to_string())
 }
 
 fn is_punc_char(c: char) -> bool {

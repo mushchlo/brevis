@@ -5,6 +5,7 @@ use std::collections::{
 use tok::{
 	TokenLiteral,
 	OpID,
+	UOpID,
 };
 
 #[derive(Clone, Debug)]
@@ -67,7 +68,7 @@ pub struct IfElse {
 
 #[derive(Clone, Debug)]
 pub struct Unary {
-	pub op: OpID,
+	pub op: UOpID,
 	pub expr: Box<Expr>,
 }
 
@@ -112,6 +113,7 @@ pub enum Type {
 
 	// Union(Vec<Aggregate>),
 	Struct(Vec<AggregateType>),
+	Pointer(Box<Type>),
 	TypeConstructor(TConstructor),
 
 	TypeVar(u16),

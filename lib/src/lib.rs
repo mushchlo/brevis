@@ -1,6 +1,7 @@
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(destructuring_assignment)]
+#![allow(non_upper_case_globals)]
 
 use std::collections::HashMap;
 use crate::{
@@ -34,7 +35,7 @@ pub mod core;
 
 #[wasm_bindgen]
 pub fn compile_js(s: String, core_fns: &str) -> String {
-    let mut lexed = lex(s);
+	let mut lexed = lex(s);
 	let mut parsed = lexed.parse();
 	parsed.annotate();
 
@@ -44,15 +45,14 @@ pub fn compile_js(s: String, core_fns: &str) -> String {
 
 #[wasm_bindgen]
 pub fn compile_c(s: String, core_fns: &str) -> String {
-    console_error_panic_hook::set_once();
+	console_error_panic_hook::set_once();
 	let mut lexed = lex(s);
 	let mut parsed = lexed.parse();
 	parsed.annotate();
 	parsed.monomorphize(&mut vec![HashMap::new()], &mut HashMap::new());
 
 	let parsed_anf = anfify_expr(parsed);
-
-    let mut compiler = Compilation::new();
-    let compiled = compiler.compile_expr(parsed_anf);
-   	format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}", core_fns, compiler.global_defs, compiler.fn_context.pop().unwrap(), compiler.global, compiled)
+	let mut compiler = Compilation::new();
+	let compiled = compiler.compile_expr(parsed_anf);
+	format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}", core_fns, compiler.global_defs, compiler.fn_context.pop().unwrap(), compiler.global, compiled)
 }

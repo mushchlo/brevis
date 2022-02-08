@@ -4,48 +4,71 @@ use crate::ast::{
 	Type::*,
 	TConstructor
 };
+use lazy_static::lazy_static;
+use parse::get_type_var;
 
-pub fn core_vals() -> HashMap<String, Type> {
-	[
-		("print", vec![Str, Void]),
-		("itoa", vec![Int, Str]),
-		("ftoa", vec![Float, Str]),
-	].iter().map(|(name, args)|
-		(
-			name.to_string(),
-			Type::TypeConstructor(TConstructor {
-				name: "Function".to_string(),
-				args: args.clone(),
-			})
-		)
-	).collect()
+lazy_static! {
+	pub static ref core_vals: HashMap<String, Type> =
+		[
+			("print", vec![Str, Void]),
+			("itoa", vec![Int, Str]),
+			("ftoa", vec![Float, Str]),
+			("sizeof",
+				vec![
+					get_type_var(),
+					Int,
+				]
+			),
+			("alloc", {
+				let t = get_type_var();
+				vec![
+					Int,
+					Type::Pointer(box t)
+				]
+			}),
+		].iter().map(|(name, args)|
+			(
+				name.to_string(),
+				Type::TypeConstructor(TConstructor {
+					name: "Function".to_string(),
+					args: args.clone(),
+				})
+			)
+		).collect();
 }
 
 pub const CORE_FNS_JS: &str =
 r#"var buffered = "";
-function _print(s) {
+function print(s) {
 	buffered += String(s);
 }
-var _itoa = String;
-var _ftoa = String;
+var itoa = String;
+var ftoa = String;
 "#;
 
 pub const CORE_FNS_9: &str =
 r#"#include <u.h>
 #include <libc.h>
 
-void _print(char* s){ print("%s", s); }
-
 char*
-_itoa(vlong val)
+itoa(vlong val)
 {
 	return smprint("%lld", val);
 }
 
 char*
-_ftoa(long double d)
+ftoa(long double d)
 {
 	return smprint("%llf", d);
+}
+
+void*
+alloc(ulong size)
+{
+	void* allocated = malloc(size);
+	if(allocated == nil)
+		exits("Failed allocation! Exiting...");
+	return allocated;
 }
 
 char*
@@ -60,10 +83,10 @@ r#"#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-void _print(char* s){ printf("%s", s); }
+void print(char* s){ printf("%s", s); }
 
 char*
-_itoa(long long int val)
+itoa(long long int val)
 {
 	static char buf[32] = {0};
 	int i = 30;
@@ -79,12 +102,23 @@ _itoa(long long int val)
 }
 
 char*
-_ftoa(long double n)
+ftoa(long double n)
 {
 	char *buf = malloc(50);
 	snprintf(buf, 50, "%llf", n);
 
 	return buf;
+}
+
+void*
+alloc(unsigned long size)
+{
+	void* allocated = malloc(size);
+	if(allocated == NULL){
+		fprintf(stderr, "Failed allocation! Exiting...");
+		exit(1);
+	}
+	return allocated;
 }
 
 char*

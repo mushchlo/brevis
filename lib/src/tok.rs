@@ -9,7 +9,7 @@ pub struct Token {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenValue {
-	UnaryOp(OpID),
+	UnaryOp(UOpID),
 	BinaryOp(OpID),
 	AssignOp(OpID),
 	KeyWord(KeyWord),
@@ -27,6 +27,14 @@ pub enum TokenLiteral {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum UOpID {
+	Not, // !
+	Neg, // -
+	At,  // @
+	Ref, // &
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum OpID {
 	// assignment
 	Eq,
@@ -36,10 +44,6 @@ pub enum OpID {
 
 	// string concatenation
 	Concat,
-
-	// the only unaries (hate these)
-	Not,
-	Minus,
 
 	// mathematical operators
 	Add, // Int, Int => Int / Flt, Flt => Flt

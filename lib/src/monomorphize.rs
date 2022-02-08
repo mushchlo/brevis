@@ -15,6 +15,8 @@ use ast::{
 	Variable,
 };
 
+use core::core_vals;
+
 
 static MONOMORPHIZE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -36,15 +38,18 @@ impl AST {
 			AST::LetNode(ref mut l) => {
 				if let Some(ref mut e) = l.def {
 					e.monomorphize(fns, monomorphized_fns);
-					if let LambdaNode(lam) = &e.val {
-						fns.last_mut().unwrap().insert(
-							l.var.name.clone(),
-							(*e.clone(), lam.generics.clone())
-						);
-					// We're monomorphizing this function, no reason for its generic
-					// version to exist!
-						l.def = None;
-						l.var.r#type = Type::Void;
+					match &e.val {
+						LambdaNode(lam) if !lam.generics.is_empty() => {
+							fns.last_mut().unwrap().insert(
+								l.var.name.clone(),
+								(*e.clone(), lam.generics.clone())
+							);
+						// We're monomorphizing this function, no reason for its generic
+						// version to exist!
+							l.def = None;
+							l.var.r#type = Type::Void;
+						}
+						_ => {}
 					}
 				}
 			}
@@ -56,7 +61,7 @@ impl AST {
 }
 
 impl Expr {
-	fn env_find<V: Clone>(env: &[HashMap<String, V>], fn_name: &str) -> V {
+	fn env_find<V: Clone + std::fmt::Debug>(env: &[HashMap<String, V>], fn_name: &str) -> V {
 		for map in env {
 			for (name, v) in map.iter() {
 				if name == fn_name {
@@ -64,7 +69,7 @@ impl Expr {
 				}
 			}
 		}
-		unreachable!()
+		panic!("{} was not found in env {:#?}!", fn_name, env);
 	}
 
 	pub fn monomorphize(
@@ -81,7 +86,7 @@ impl Expr {
 			}
 
 			VarNode(ref mut v) => {
-				if !v.generics.is_empty() {
+				if !v.generics.is_empty() && !core_vals.contains_key(&v.name) {
 					let instantiation =
 						Expr::env_find(fns, &v.name).1
 							.into_iter()

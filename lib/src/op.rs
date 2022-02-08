@@ -1,5 +1,6 @@
 use unify::Constraint;
 use ast::{
+	Unary,
 	Binary,
 	ExprVal,
 	Type,
@@ -8,8 +9,11 @@ use ast::{
 };
 use tok::{
 	OpID,
-	OpID::*
+	OpID::*,
+	UOpID,
+	UOpID::*,
 };
+use parse::get_type_var;
 
 
 impl Binary {
@@ -19,7 +23,6 @@ impl Binary {
 			Eq | Doeq | Noteq => vec![ Constraint::Equal(left_t, right_t) ],
 			Gt | Lt | Gteq | Lteq => vec![
 				Constraint::Equal(left_t, right_t),
-//				Constraint::In(left_t.clone(), vec![ Int, Float) ])
 			],
 
 			And | Or | Xor => vec![
@@ -28,7 +31,6 @@ impl Binary {
 
 			Add | Sub | Mul | Div => vec![
 				Constraint::Equal(left_t, right_t),
-//				Constraint::In(left_t.clone(), vec![ Int, Float ])
 			],
 
 			Mod => vec![
@@ -58,7 +60,7 @@ impl Binary {
 				]
 			}
 
-			_ => panic!("Unary operator had a requested binary constraint")
+			InfixFn => panic!("no"),
 		}
 	}
 }
@@ -81,3 +83,37 @@ impl OpID {
 		}
 	}
 }
+
+impl Unary {
+	pub fn associations(&self, expr_t: Type) -> Vec<Constraint> {
+		let operand_t = self.expr.r#type.clone();
+		match self.op {
+			Not =>
+				vec![
+					Constraint::Equal(operand_t, Type::Bool),
+				],
+			Neg =>
+				vec![],
+			At =>
+				vec![
+					Constraint::Equal(
+						Type::Pointer(box expr_t),
+						operand_t
+					),
+				],
+			Ref => vec![],
+		}
+	}
+}
+
+impl UOpID {
+	pub fn result(&self, operand_t: Type) -> Type {
+		match *self {
+			Not => Type::Bool,
+			Neg => operand_t,
+			At => get_type_var(),
+			Ref => Type::Pointer(box operand_t),
+		}
+	}
+}
+

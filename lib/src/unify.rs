@@ -16,6 +16,7 @@ use crate::{
 		IfElse,
 		Call,
 		Binary,
+		Unary,
 		Variable,
 		Parameter,
 		TConstructor,
@@ -49,7 +50,18 @@ pub enum Constraint {
 impl Inference {
 	fn new() -> Self {
 		Inference {
-			env: vec![core_vals().into_iter().map(|(k,v)| (k, GenericType::new(v))).collect()],
+			env: vec![
+				core_vals.iter()
+					.map(|(s,t)| (
+						s.clone(),
+						GenericType {
+							uninstantiated: t.clone(),
+							generics:
+								free_in_type(&HashMap::new(), t.clone()).into_iter().collect(),
+						}
+					))
+					.collect()
+			],
 			substitutions: HashMap::new()
 		}
 	}
@@ -140,9 +152,20 @@ impl Inference {
 			}
 
 			ExprVal::UnaryNode(u) => {
-				self.infer(*u.expr, constraints).val
-					// TODO:  MASSIVE BUG, assumes that all unaries have type 'a -> 'a.
-					// make unary operators their own enum, and match on them here.
+				let mut op_constraints = u.associations(expr.r#type.clone());
+				let new_expr = self.infer(*u.expr.clone(), constraints);
+				constraints.push(Constraint::Equal(new_expr.r#type.clone(), u.expr.r#type));
+				constraints.append(&mut op_constraints);
+
+				let result_t = u.op.result(new_expr.r#type.clone());
+				constraints.push(Constraint::Equal(result_t, expr.r#type.clone()));
+
+				ExprVal::UnaryNode(
+					Unary {
+						expr: box new_expr,
+						op: u.op,
+					}
+				)
 			}
 
 			ExprVal::BinaryNode(b) if b.op == OpID::Member => {
@@ -402,10 +425,12 @@ pub fn instantiate(
 			t,
 		TypeVar(v) if substitutions.contains_key(&v) =>
 			instantiate(substitutions, instantiation, substitutions[&v].clone()),
-		TypeVar(n) if instantiation.contains_key(&n) =>
-			instantiation[&n].clone(),
+		TypeVar(v) if instantiation.contains_key(&v) =>
+			instantiation[&v].clone(),
 		Void | Int | Float | Str | Bool | TypeVar(_) =>
 			t,
+		Pointer(box r) =>
+			Pointer(box instantiate(substitutions, instantiation, r)),
 		TypeConstructor(tc) =>
 			TypeConstructor(
 				TConstructor {
@@ -435,6 +460,8 @@ pub fn instantiate(
 fn substitute(substitutions: &HashMap<u16, Type>, t: Type) -> Type {
 	match t {
 		Void | Int | Float | Str | Bool => t,
+		Pointer(box r) =>
+			Pointer(box substitute(substitutions, r)),
 
 		TypeVar(n) if substitutions.contains_key(&n) =>
 			substitute(
@@ -502,6 +529,9 @@ fn unify(substitutions: &mut HashMap<u16, Type>, t1: Type, t2: Type) {
 			}
 		}
 
+		(Pointer(box r1), Pointer(box r2)) =>
+			unify(substitutions, r1, r2),
+
 		(TypeVar(i), TypeVar(j)) if i == j => {}
 		(TypeVar(i), _) if substitutions.contains_key(&i) => {
 			unify(substitutions, substitutions[&i].clone(), t2)
@@ -520,14 +550,18 @@ fn unify(substitutions: &mut HashMap<u16, Type>, t1: Type, t2: Type) {
 		}
 
 		_ if t1 != t2 =>
-			panic!("unified concrete types are not equal {:#?} != {:#?}", t1, t2),
-		_ =>
-			{},
+			panic!("unified concrete types are not equal in substitutions {:#?}, {:#?} != {:#?}", substitutions, t1, t2),
+		_ => {},
 	}
 }
 
 fn occurs_in(substitutions: &HashMap<u16, Type>, index: u16, t: Type) -> bool {
 	match t {
+		Void | Int | Float | Str | Bool => false,
+
+		Pointer(box p) =>
+			occurs_in(substitutions, index, p),
+
 		TypeVar(i) if substitutions.contains_key(&i) => {
 			occurs_in(substitutions, index, substitutions[&i].clone())
 		}
@@ -539,8 +573,6 @@ fn occurs_in(substitutions: &HashMap<u16, Type>, index: u16, t: Type) -> bool {
 		TypeConstructor(TConstructor { args: a, .. }) => {
 			a.into_iter().any(|t1| occurs_in(substitutions, index, t1))
 		}
-
-		Void | Int | Float | Str | Bool => false
 	}
 }
 
@@ -574,6 +606,8 @@ pub fn free_in_type(substitutions: &HashMap<u16, Type>, t: Type) -> HashSet<u16>
 			free_in_type(substitutions, substitutions[&i].clone()),
 		TypeVar(i) =>
 			HashSet::from([i]),
+		Pointer(box r) =>
+			free_in_type(substitutions, r),
 		TypeConstructor(tc) =>
 			tc.args.iter()
 				.map(|arg| free_in_type(substitutions, arg.clone()))

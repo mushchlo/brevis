@@ -17,7 +17,10 @@ use tok::{
 	TokenLiteral::*,
 	OpID,
 	OpID::*,
+	UOpID::*,
 };
+
+use core::core_vals;
 
 static LAMBDA_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -104,7 +107,7 @@ pub fn compile_expr_js(e: Expr) -> String {
 			format!("{}({})",
 				match u.op {
 					Not => "!",
-					Minus => "-",
+					Neg => "-",
 					_ => panic!("unary is not unary!")
 				},
 				compile_expr_js(*u.expr)
@@ -125,7 +128,7 @@ pub fn compile_expr_js(e: Expr) -> String {
 				)
 			},
 		CallNode(c) =>
-			format!("({})({})",
+			format!("{}({})",
 				compile_expr_js(*c.func),
 				c.args.iter()
 					.map(|v| compile_trivial(v.clone()))
@@ -230,21 +233,25 @@ impl Compilation {
 			LiteralNode(lit) =>
 				self.compile_literal(lit),
 
+			VarNode(v) if core_vals.contains_key(&v.name) => v.name,
 			VarNode(v) => mk_id(v.name),
 
-			BlockNode(b) => format!("({})", b.iter()
-												.filter_map(|box l| {
-													let res = self.compile(l.clone());
-													if res.trim().is_empty() {
-														None
-													} else {
-														Some(res)
-													}
-												})
-												.reduce(|acc, next|
-															acc.clone() + if !acc.is_empty() { ", " } else { "" } + &next)
-												.unwrap()
-							),
+			BlockNode(b) =>
+				format!("({})",
+					b.iter()
+						.filter_map(|box l| {
+							let res = self.compile(l.clone());
+							if res.trim().is_empty() {
+								None
+							} else {
+								Some(res)
+							}
+						})
+						.reduce(|acc, next|
+							acc.clone() + if !acc.is_empty() { ", " } else { "" } + &next
+						)
+						.unwrap()
+				),
 
 			LambdaNode(l) =>
 				self.compile_lambda(l, None),
@@ -263,8 +270,9 @@ impl Compilation {
 			UnaryNode(u) => {
 				let c_op = match u.op {
 					Not => "!",
-					Minus => "-",
-					_ => panic!("unary is not unary!")
+					Neg => "-",
+					Ref => "&",
+					At => "*",
 				};
 
 				format!("{}({})", c_op, self.compile_expr(*u.expr))
@@ -275,6 +283,8 @@ impl Compilation {
 					self.compile_expr(*b.left),
 					self.compile_expr(*b.right)
 				);
+			// TODO: A special case of strings is only made because we still use
+			// C-strings! We should not use C-strings!!!!!!
 				if e.r#type == Str {
 					match b.op {
 						Eq => format!("{} = {}", c_left, c_right),
@@ -297,11 +307,12 @@ impl Compilation {
 			}
 
 			CallNode(c) => {
-				let args = c.args.iter()
-									.map(|tr| compile_trivial(tr.clone()))
-									.reduce(|acc, next| acc + ", " + &next)
-									.unwrap_or_else(|| "".to_string());
-				format!("({})({})", self.compile_expr(*c.func), args)
+				let args =
+					c.args.iter()
+						.map(|tr| compile_trivial(tr.clone()))
+						.reduce(|acc, next| acc + ", " + &next)
+						.unwrap_or_else(|| "".to_string());
+				format!("{}({})", self.compile_expr(*c.func), args)
 			}
 		}
 	}
@@ -319,6 +330,14 @@ impl Compilation {
 				Float => "long double",
 				Str => "char*",
 				Bool => "char",
+
+				Pointer(box r) => {
+					return self.compile_type_name(
+						r,
+						format!("*{}", name),
+						fns_as_ptrs
+					);
+				}
 
 				TypeConstructor(tc) if tc.name == "Function" => {
 					return self.compile_fn_type(
@@ -449,7 +468,10 @@ fn compile_trivial(tr: Expr) -> String {
 	match tr.val {
 		ExprVal::LiteralNode(AtomicLiteral(atom)) =>
 			compile_atomic(atom),
-		ExprVal::VarNode(v) => mk_id(v.name),
+		ExprVal::VarNode(v) if core_vals.contains_key(&v.name) =>
+			v.name,
+		ExprVal::VarNode(v) =>
+			mk_id(v.name),
 		_ => panic!("trivial is not trivial")
 	}
 }
@@ -472,6 +494,8 @@ fn type_hash(t: Type) -> String {
 		Float => "f".to_string(),
 		Str => "s".to_string(),
 		Bool => "b".to_string(),
+		Pointer(box r) =>
+			format!("p{}", type_hash(r)),
 		Struct(s) =>
 			format!("struct__{}__",
 				s.iter()
