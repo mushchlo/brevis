@@ -261,7 +261,7 @@ fn is_op_char(c: char) -> bool {
 }
 
 fn is_punc_char(c: char) -> bool {
-	",;:[]{}()".contains(&c.to_string())
+	"',;:[]{}()".contains(&c.to_string())
 }
 
 fn is_special_char(c: char) -> bool {

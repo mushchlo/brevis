@@ -35,8 +35,10 @@ use std::sync::{
 };
 
 lazy_static! {
-	static ref TYPE_DICT: Mutex<HashMap<&'static str, Type>> = Mutex::new(HashMap::new());
-	static ref TYPE_VAR_COUNTER: Arc<AtomicU16> = Arc::new(AtomicU16::new(0));
+	static ref TYPE_DICT: Mutex<Vec<HashMap<String, Type>>> =
+		Mutex::new(vec![HashMap::new()]);
+	static ref TYPE_VAR_COUNTER: Arc<AtomicU16> =
+		Arc::new(AtomicU16::new(0));
 
 	static ref VAR_TYPES: Mutex<Vec<HashMap<String, Type>>> =
 		Mutex::new(vec![
@@ -45,9 +47,8 @@ lazy_static! {
 		]);
 }
 
-fn type_of(id: &str) -> Option<Type> {
-	let var_types = VAR_TYPES.lock().unwrap().to_vec();
-	for map in var_types {
+fn find_in(id: &str, dict: &Vec<HashMap<String, Type>>) -> Option<Type> {
+	for map in dict {
 		if map.contains_key(id) {
 			return map.get(id).cloned();
 		}
@@ -56,19 +57,16 @@ fn type_of(id: &str) -> Option<Type> {
 	None
 }
 
-fn var_types_insert(key: String, value: Type) {
-	let mut var_types = VAR_TYPES.lock().unwrap();
-	var_types.last_mut().unwrap().insert(key, value);
+fn insert_in(key: String, value: Type, dict: &mut Vec<HashMap<String, Type>>) {
+	dict.last_mut().unwrap().insert(key, value);
 }
 
-fn var_types_new_stack() {
-	let mut var_types = VAR_TYPES.lock().unwrap();
-	var_types.push(HashMap::new());
+fn new_stack_in(dict: &mut Vec<HashMap<String, Type>>) {
+	dict.push(HashMap::new());
 }
 
-fn var_types_pop_stack() {
-	let mut var_types = VAR_TYPES.lock().unwrap();
-	var_types.pop();
+fn pop_stack_in(dict: &mut Vec<HashMap<String, Type>>) {
+	dict.pop();
 }
 
 impl AST {
@@ -106,12 +104,12 @@ impl TokenStream {
 	}
 
 	pub fn parse(&mut self) -> Expr {
-	    *VAR_TYPES.lock().unwrap() =
-		    vec![
-			    core_vals.clone(),
-			    HashMap::new()
-		    ];
-	    TYPE_DICT.lock().unwrap().clear();
+		*VAR_TYPES.lock().unwrap() =
+			vec![
+				core_vals.clone(),
+				HashMap::new()
+			];
+		*TYPE_DICT.lock().unwrap() = vec![ HashMap::new() ];
 		let mut parsed = VecDeque::<AST>::new();
 
 		while self.peek().is_some() {
@@ -134,9 +132,12 @@ impl TokenStream {
 	}
 
 	fn parse_expr(&mut self) -> Expr {
+		new_stack_in(&mut *TYPE_DICT.lock().unwrap());
 		let expr = self.parse_atom().expect_expr();
-		self.maybe_call(|s| ExprNode(s.maybe_binary(expr.clone(), -1)))
-			.expect_expr()
+		let ret = self.maybe_call(|s| ExprNode(s.maybe_binary(expr.clone(), -1)))
+			.expect_expr();
+		pop_stack_in(&mut *TYPE_DICT.lock().unwrap());
+		ret
 	}
 
 	fn maybe_call<F>(&mut self, mut get_ast: F) -> AST
@@ -277,7 +278,7 @@ impl TokenStream {
 							generics: vec![],
 						}
 					),
-					r#type: type_of(&id).unwrap()
+					r#type: find_in(&id, &*VAR_TYPES.lock().unwrap()).unwrap()
 				})
 			}
 			UnaryOp(u) => s.parse_unary(u),
@@ -348,7 +349,7 @@ impl TokenStream {
 			..
 		}) = self.next()
 		{
-			if type_of(&id).is_some() {
+			if find_in(&id, &*VAR_TYPES.lock().unwrap()).is_some() {
 				// making sure declared var does not already exist
 				panic!(
 					"variable {} was already declared, but was declared again at {}",
@@ -356,22 +357,22 @@ impl TokenStream {
 				);
 			}
 			let var_type = match self.peek() {
-				Some(Token { val: Punc(':'), .. }) => {
+				Some(t) if t.val == Punc(':') => {
 					self.skip_token(Punc(':'));
 					self.parse_type()
 				}
-				_ => get_type_var(),
+				_ => get_type_var()
 			};
 			let var = Parameter {
 				name: id,
 				r#type: var_type,
 			};
 
-			var_types_insert(var.name.clone(), var.r#type.clone());
-
-			return var;
+			insert_in(var.name.clone(), var.r#type.clone(), &mut *VAR_TYPES.lock().unwrap());
+			var
+		} else {
+			panic!("expected identifier for declared variable, found EOF")
 		}
-		panic!("expected identifier for declared variable, found EOF");
 	}
 
 	fn parse_id(&mut self) -> String {
@@ -381,7 +382,7 @@ impl TokenStream {
 			..
 		}) = self.next()
 		{
-			if type_of(&id).is_some() {
+			if find_in(&id, &*VAR_TYPES.lock().unwrap()).is_some() {
 				return id;
 			} else {
 				panic!("identifier {} at {} was used before declaration", id, pos);
@@ -414,11 +415,11 @@ impl TokenStream {
 	}
 
 	fn parse_block(&mut self) -> AST {
-		var_types_new_stack();
+		new_stack_in(&mut *VAR_TYPES.lock().unwrap());
 		let parsed = self.delimited(Punc('{'), Punc('}'), Punc(';'), |s| {
 			s.parse_node()
 		});
-		var_types_pop_stack();
+		pop_stack_in(&mut *VAR_TYPES.lock().unwrap());
 
 		match parsed.len() {
 			0 => panic!("empty block :/"),
@@ -459,13 +460,13 @@ impl TokenStream {
 
 	fn parse_lambda(&mut self) -> AST {
 		self.skip_token(KeyWord(KeyWord::λ));
-		var_types_new_stack();
+		new_stack_in(&mut *VAR_TYPES.lock().unwrap());
 		let lambda_expr = new_expr_ast(LambdaNode(Lambda {
 				args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
 				generics: vec![],
 				body: Box::new(self.parse_expr()),
 			}));
-		var_types_pop_stack();
+		pop_stack_in(&mut *VAR_TYPES.lock().unwrap());
 		lambda_expr
 	}
 
@@ -513,7 +514,6 @@ impl TokenStream {
 	}
 
 	fn parse_type(&mut self) -> Type {
-// TODO: generic types should actually be parseable, i.e. syntax for them should be defined and implemented for λ's.
 		match self.next() {
 			Some(tok) => match tok.val {
 				KeyWord(kw) => match kw {
@@ -536,13 +536,32 @@ impl TokenStream {
 							},
 						})
 					}
+
 					_ => panic!(
 						"Keyword {:?} does not represent a type, but was used in place of one",
 						kw
 					),
-				},
+				}
+				Punc('\'') => {
+					let generic_name = match self.next() {
+						Some(Token { val: Ident(id), .. }) =>
+							format!("'{}", id),
+						Some(non_id) =>
+							panic!("expected an identifier for a generic type at {}, found {:#?}", non_id.start, non_id.val),
+						None =>
+							panic!("expected an identifier for a generic type, found EOF")
+					};
+					let type_var =
+						if let Some(t) = find_in(&generic_name, &*TYPE_DICT.lock().unwrap()) {
+							t
+						} else {
+							get_type_var()
+						};
+					insert_in(generic_name, type_var.clone(), &mut *TYPE_DICT.lock().unwrap());
+					type_var
+				}
 				Ident(id) =>
-					match TYPE_DICT.lock().unwrap().get(&*id) {
+					match TYPE_DICT.lock().unwrap().last().unwrap().get(&id) {
 						Some(t) => t.clone(),
 						_ => panic!("identifier {} does not represent a type, but was used in place of one", id),
 					},
@@ -577,7 +596,7 @@ impl TokenStream {
 				UnaryOp(Ref) =>
 					Type::Pointer(box self.parse_type()),
 
-				non_type => panic!("expected type, received {:?}", non_type),
+				non_type => panic!("expected type at {}, received {:?}", tok.start, non_type),
 			},
 
 			None => panic!("expected a type, received EOF"),
