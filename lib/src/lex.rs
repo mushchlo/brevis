@@ -1,7 +1,6 @@
-use peeking_take_while::PeekableExt;
 use std::collections::VecDeque;
 
-use cradle::{CharsPos, CharsPosition, SourcePos};
+use cradle::{CharsPos, SourceLoc, SourcePos};
 
 use tok::{
 	Token,
@@ -19,23 +18,23 @@ use tok::{
 #[derive(Clone, Debug)]
 pub struct TokenStream(pub VecDeque<Token>);
 
-pub fn lex(s: String) -> TokenStream {
-	let mut src = s.chars_pos();
+pub fn lex(s: &str) -> TokenStream {
+	let mut src = CharsPos::new(s);
 	let mut tokstrm: VecDeque<Token> = VecDeque::new();
 
 	while let Some((_, c)) = src.skip_whitespace().peek() {
-		if c == '«' {
+		if *c == '«' {
 			src.skip_comment()
 		} else {
 			tokstrm.push_back(match c {
 				'"' => src.get_strlit(),
 				'0'..='9' => src.get_numlit(),
 				_ => {
-					if is_op_char(c) {
+					if is_op_char(*c) {
 						src.get_op(
 							tokstrm.back().map(|tok| &tok.val)
 						)
-					} else if is_punc_char(c) {
+					} else if is_punc_char(*c) {
 						src.make_token(|s| TokenValue::Punc(s.next().unwrap().1))
 					} else {
 						src.get_id()
@@ -49,8 +48,8 @@ pub fn lex(s: String) -> TokenStream {
 }
 
 impl CharsPos<'_> {
-	fn peek(&mut self) -> Option<(SourcePos, char)> {
-		Some((self.pos, *self.iter.peek()?))
+	pub fn peek(&mut self) -> Option<(SourcePos, &char)> {
+		Some((self.pos, self.source.peek()?))
 	}
 
 	fn skip_char(&mut self, expected: char) {
@@ -66,9 +65,19 @@ impl CharsPos<'_> {
 	where
 		F: FnMut(&char) -> bool, // sometimes callers need to retain state between closure calls
 	{
-		self.iter
-			.peeking_take_while(|c| cond(c))
-			.collect::<String>()
+		let mut acc = String::new();
+		loop {
+			match self.peek() {
+				Some((_, c)) if cond(c) => {
+					acc.push(*c);
+					self.next();
+				}
+
+				_ => {
+					break acc;
+				}
+			}
+		}
 	}
 
 	fn read_lit<T, F>(&mut self, cond: F) -> T
@@ -137,9 +146,8 @@ impl CharsPos<'_> {
 		});
 
 		Token {
-			start: startpos,
 			val: num_lit,
-			end: self.pos,
+			loc: SourceLoc::new(startpos, self.pos.index),
 		}
 	}
 
@@ -183,11 +191,9 @@ impl CharsPos<'_> {
 	{
 		let startpos = self.pos;
 		let value = f(self);
-		let endpos = self.pos;
 		Token {
-			start: startpos,
 			val: value,
-			end: endpos,
+			loc: SourceLoc::new(startpos, self.pos.index),
 		}
 	}
 }

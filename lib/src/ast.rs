@@ -7,6 +7,7 @@ use tok::{
 	OpID,
 	UOpID,
 };
+use cradle::SourceLoc;
 
 #[derive(Clone, Debug)]
 pub enum AST {
@@ -17,6 +18,7 @@ pub enum AST {
 #[derive(Clone, Debug)]
 pub struct Expr {
 	pub val: ExprVal,
+	pub loc: SourceLoc,
 	pub r#type: Type,
 }
 
@@ -52,9 +54,13 @@ pub struct Variable {
 	pub generics: Vec<Type>,
 }
 
+
+// TODO: make member accesses NOT binary structures, but
+// their own thing.
 #[derive(Clone, Debug)]
 pub struct Binary {
 	pub op: OpID,
+	pub op_loc: SourceLoc,
 	pub left: Box<Expr>,
 	pub right: Box<Expr>,
 }
@@ -69,6 +75,7 @@ pub struct IfElse {
 #[derive(Clone, Debug)]
 pub struct Unary {
 	pub op: UOpID,
+	pub op_loc: SourceLoc,
 	pub expr: Box<Expr>,
 }
 
@@ -83,6 +90,8 @@ pub struct Lambda {
 pub struct Parameter {
 	pub name: String,
 	pub r#type: Type,
+	pub name_loc: SourceLoc,
+	pub type_loc: Option<SourceLoc>,
 }
 
 #[derive(Clone, Debug)]

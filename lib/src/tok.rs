@@ -1,10 +1,9 @@
-use cradle::SourcePos;
+use cradle::SourceLoc;
 
 #[derive(Debug, Clone)]
 pub struct Token {
 	pub val: TokenValue,
-	pub start: SourcePos,
-	pub end: SourcePos,
+	pub loc: SourceLoc,
 }
 
 #[derive(Debug, PartialEq, Clone)]

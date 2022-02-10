@@ -11,6 +11,7 @@ use crate::{
 		Compilation,
 		compile_expr_js
 	},
+	error::print_error,
 };
 use wasm_bindgen::prelude::*;
 
@@ -20,39 +21,59 @@ extern crate peeking_take_while;
 extern crate wasm_bindgen;
 extern crate console_error_panic_hook;
 
+pub mod core;
+mod anf;
 mod ast;
+mod codegen;
 mod cradle;
+mod error;
 mod lex;
+mod monomorphize;
+mod op;
 mod parse;
 mod tok;
-mod op;
+mod typeprint;
 mod unify;
-mod anf;
-mod codegen;
-mod monomorphize;
-pub mod core;
 
 
 #[wasm_bindgen]
 pub fn compile_js(s: String, core_fns: &str) -> String {
-	let mut lexed = lex(s);
+	let mut lexed = lex(&s);
 	let mut parsed = lexed.parse();
-	parsed.annotate();
+	let errors = parsed.annotate();
 
-	let parsed_anf = anfify_expr(parsed);
-	format!("{}\n{}; buffered", core_fns, compile_expr_js(parsed_anf))
+	if !errors.is_empty() {
+		let err_count = errors.len();
+		for err in errors {
+			print_error(&s, err);
+		}
+		eprintln!("Ended compilation due to the previous {} errors", err_count);
+		std::process::exit(1);
+	} else {
+		let parsed_anf = anfify_expr(parsed);
+		format!("{}\n{}; buffered", core_fns, compile_expr_js(parsed_anf))
+	}
 }
 
 #[wasm_bindgen]
 pub fn compile_c(s: String, core_fns: &str) -> String {
 	console_error_panic_hook::set_once();
-	let mut lexed = lex(s);
+	let mut lexed = lex(&s);
 	let mut parsed = lexed.parse();
-	parsed.annotate();
+	let errors = parsed.annotate();
 	parsed.monomorphize(&mut vec![HashMap::new()], &mut HashMap::new());
 
-	let parsed_anf = anfify_expr(parsed);
-	let mut compiler = Compilation::new();
-	let compiled = compiler.compile_expr(parsed_anf);
-	format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}", core_fns, compiler.global_defs, compiler.fn_context.pop().unwrap(), compiler.global, compiled)
+	if !errors.is_empty() {
+		let err_count = errors.len();
+		for err in errors {
+			print_error(&s, err);
+		}
+		eprintln!("Ended compilation due to the previous {} errors", err_count);
+		std::process::exit(1);
+	} else {
+		let parsed_anf = anfify_expr(parsed);
+		let mut compiler = Compilation::new();
+		let compiled = compiler.compile_expr(parsed_anf);
+		format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}", core_fns, compiler.global_defs, compiler.fn_context.pop().unwrap(), compiler.global, compiled)
+	}
 }

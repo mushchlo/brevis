@@ -7,44 +7,47 @@ use std::{
 	},
 };
 
-use crate::{
-	ast::{
-		Expr,
-		ExprVal,
-		Let,
-		Lambda,
-		IfElse,
-		Call,
-		Binary,
-		Unary,
-		Variable,
-		Parameter,
-		TConstructor,
-		GenericType,
-		Type,
-		Type::*,
-		Aggregate,
-		AggregateType,
-		Literal::*,
-		AST,
-	},
-	tok::{
-		TokenLiteral::*,
-		OpID,
-	},
-	parse::get_type_var,
-	core::core_vals,
+use ast::{
+	Expr,
+	ExprVal,
+	Let,
+	Lambda,
+	IfElse,
+	Call,
+	Binary,
+	Unary,
+	Variable,
+	Parameter,
+	TConstructor,
+	GenericType,
+	Type,
+	Type::*,
+	Aggregate,
+	AggregateType,
+	Literal::*,
+	AST,
 };
+use tok::{
+	TokenLiteral::*,
+	OpID,
+};
+use parse::get_type_var;
+use core::core_vals;
+use cradle::SourceLoc;
+use error::ErrorMessage;
+use typeprint::name_of;
+
 
 struct Inference {
 	env: Vec<HashMap<String, GenericType>>,
-	substitutions: HashMap<u16, Type>
+	substitutions: HashMap<u16, Type>,
+	errors: Vec<ErrorMessage>,
 }
 
 #[derive(Clone, Debug)]
 pub enum Constraint {
-	Equal(Type, Type),
-	HasMember(Type, AggregateType),
+	Equal((Type, SourceLoc), (Type, SourceLoc)),
+	HasMember((Type, SourceLoc), (AggregateType, SourceLoc)),
 }
 
 impl Inference {
@@ -62,7 +65,8 @@ impl Inference {
 					))
 					.collect()
 			],
-			substitutions: HashMap::new()
+			substitutions: HashMap::new(),
+			errors: Vec::new(),
 		}
 	}
 
@@ -86,7 +90,7 @@ impl Inference {
 				l.def =
 					l.def.clone().map(|def| {
 						let new_def = self.infer(*def.clone(), constraints);
-						constraints.push(Constraint::Equal(def.r#type.clone(), new_def.r#type.clone()));
+						constraints.push(mk_eq(&def, &new_def));
 						l.var.r#type = new_def.r#type.clone();
 						box new_def
 					});
@@ -114,7 +118,7 @@ impl Inference {
 	fn infer(&mut self, mut expr: Expr, constraints: &mut Vec<Constraint>) -> Expr {
 		let new_expr_val = match expr.val.clone() {
 			ExprVal::LiteralNode(StructLiteral(s)) => {
-				let new_struct =
+				let inferred_struct =
 					s.iter()
 						.map(|a|
 							Aggregate {
@@ -125,7 +129,7 @@ impl Inference {
 						.collect::<Vec<_>>();
 				let new_struct_t =
 					Struct(
-						new_struct.iter()
+						inferred_struct.iter()
 							.map(|a|
 								AggregateType {
 									name: a.name.clone(),
@@ -134,36 +138,40 @@ impl Inference {
 							)
 							.collect()
 					);
-				constraints.push(Constraint::Equal(expr.r#type.clone(), new_struct_t));
+				let new_struct = Expr {
+					val: ExprVal::LiteralNode(StructLiteral(inferred_struct)),
+					loc: expr.loc,
+					r#type: new_struct_t,
+				};
+				constraints.push(mk_eq(&expr, &new_struct));
 
-				ExprVal::LiteralNode(StructLiteral(new_struct))
+				new_struct.val
 			}
 
 			ExprVal::LiteralNode(AtomicLiteral(lit)) => {
-				let lit_t = match lit {
+				let mut new_lit = expr.clone();
+				new_lit.r#type = match lit {
 					StrLit(_) => Str,
 					IntLit(_) => Int,
 					FltLit(_) => Float,
 					BoolLit(_) => Bool,
 				};
-				constraints.push(Constraint::Equal(lit_t, expr.r#type.clone()));
+				constraints.push(mk_eq(&new_lit, &expr));
 
 				ExprVal::LiteralNode(AtomicLiteral(lit))
 			}
 
 			ExprVal::UnaryNode(u) => {
-				let mut op_constraints = u.associations(expr.r#type.clone());
-				let new_expr = self.infer(*u.expr.clone(), constraints);
-				constraints.push(Constraint::Equal(new_expr.r#type.clone(), u.expr.r#type));
+				let mut op_constraints = u.associations(&expr);
+				let new_operand = self.infer(*u.expr.clone(), constraints);
+				constraints.push(mk_eq(&new_operand, &u.expr));
 				constraints.append(&mut op_constraints);
-
-				let result_t = u.op.result(new_expr.r#type.clone());
-				constraints.push(Constraint::Equal(result_t, expr.r#type.clone()));
 
 				ExprVal::UnaryNode(
 					Unary {
-						expr: box new_expr,
+						expr: box new_operand,
 						op: u.op,
+						op_loc: u.op_loc,
 					}
 				)
 			}
@@ -171,22 +179,23 @@ impl Inference {
 			ExprVal::BinaryNode(b) if b.op == OpID::Member => {
 				let new_left = self.infer(*b.left.clone(), constraints);
 
-				constraints.push(Constraint::Equal(new_left.r#type.clone(), b.left.r#type.clone()));
+				constraints.push(mk_eq(&new_left, &b.left));
 
-				let mut op_constraints = b.associations();
+				let mut op_constraints = b.associations(&expr);
 				constraints.append(&mut op_constraints);
-				let result_t = b.op.result(new_left.r#type.clone(), b.right.r#type.clone());
-				constraints.push(Constraint::Equal(result_t, expr.r#type.clone()));
-
+		// TODO: Do we even need this? It's horrible
+/*
 				if let Struct(s) = new_left.r#type.clone() {
 					if let Some(i) = s.iter().position(|a| matches!(b.right.val.clone(), ExprVal::VarNode(s) if s.name == a.name)) {
-						constraints.push(Constraint::Equal(b.right.r#type.clone(), s[i].r#type.clone()));
+						constraints.push(mk_eq(&b.right, &s[i]));
 					}
 				}
+*/
 
 				ExprVal::BinaryNode(
 					Binary {
 						op: b.op,
+						op_loc: b.op_loc,
 						left: box new_left,
 						right: b.right,
 					}
@@ -199,18 +208,16 @@ impl Inference {
 					self.infer(*b.right.clone(), constraints)
 				);
 
-				constraints.push(Constraint::Equal(new_left.r#type.clone(), b.left.r#type.clone()));
-				constraints.push(Constraint::Equal(new_right.r#type.clone(), b.right.r#type.clone()));
+				constraints.push(mk_eq(&new_left, &b.left));
+				constraints.push(mk_eq(&new_right, &b.right));
 
-				let mut op_constraints = b.associations();
+				let mut op_constraints = b.associations(&expr);
 				constraints.append(&mut op_constraints);
-
-				let result_t = b.op.result(new_left.r#type.clone(), new_right.r#type.clone());
-				constraints.push(Constraint::Equal(result_t, expr.r#type.clone()));
 
 				ExprVal::BinaryNode(
 					Binary {
 						op: b.op,
+						op_loc: b.op_loc,
 						left: box new_left,
 						right: box new_right,
 					}
@@ -219,20 +226,17 @@ impl Inference {
 
 			ExprVal::BlockNode(b) => {
 				self.env.push(HashMap::new());
-
 				let new_block: VecDeque<_> =
 					b.iter()
 						.map(|line|
 							self.infer_ast(line.clone(), constraints)
 						)
 						.collect();
-
-				let block_val_t = match new_block.back() {
-					Some(AST::ExprNode(e)) => e.r#type.clone(),
-					_ => Void
-				};
 				self.env.pop();
-				constraints.push(Constraint::Equal(block_val_t, expr.r#type.clone()));
+
+				if let Some(AST::ExprNode(last_line)) = new_block.back() {
+					constraints.push(mk_eq(last_line, &expr));
+				}
 
 				ExprVal::BlockNode(new_block)
 			}
@@ -242,13 +246,18 @@ impl Inference {
 				let new_cond = self.infer(*i.cond.clone(), constraints);
 				let new_else = i.r#else.map(|box else_expr| {
 					let tmp = self.infer(else_expr, constraints);
-					constraints.push(Constraint::Equal(new_then.r#type.clone(), tmp.r#type.clone()));
+					constraints.push(mk_eq(&new_then, &tmp));
 					box tmp
 				});
-				constraints.push(Constraint::Equal(new_then.r#type.clone(), i.then.r#type.clone()));
-				constraints.push(Constraint::Equal(new_then.r#type.clone(), expr.r#type.clone()));
-				constraints.push(Constraint::Equal(new_cond.r#type.clone(), i.cond.r#type.clone()));
-				constraints.push(Constraint::Equal(new_cond.r#type.clone(), Bool));
+				constraints.push(mk_eq(&new_then, &i.then));
+				constraints.push(mk_eq(&new_then, &expr));
+				constraints.push(mk_eq(&new_cond, &i.cond));
+				constraints.push(
+					Constraint::Equal(
+						(new_cond.r#type.clone(), new_cond.loc),
+						(Bool, SourceLoc::new(expr.loc.start, new_cond.loc.start.index))
+					)
+				);
 
 				ExprVal::IfNode(
 					IfElse {
@@ -273,19 +282,30 @@ impl Inference {
 					generic_t.generics.into_iter()
 						.zip(new_generics.clone())
 						.collect();
-				let new_var_t = instantiate(
-					&self.substitutions,
-					&instantiation,
-					generic_t.uninstantiated
-				);
 
 				if !v.generics.is_empty() {
 					assert!(v.generics.len() == new_generics.len());
 					for (g1, g2) in v.generics.iter().zip(new_generics.iter()) {
-						constraints.push(Constraint::Equal(g1.clone(), g2.clone()));
+						constraints.push(Constraint::Equal(
+							(g1.clone(), expr.loc),
+							(g2.clone(), expr.loc)
+						));
 					}
 				}
-				constraints.push(Constraint::Equal(new_var_t, expr.r#type.clone()));
+
+				let new_var = Expr {
+					val: ExprVal::VarNode(Variable {
+						name: v.name.clone(),
+						generics: new_generics.clone(),
+					}),
+					loc: expr.loc,
+					r#type: instantiate(
+						&self.substitutions,
+						&instantiation,
+						generic_t.uninstantiated
+					),
+				};
+				constraints.push(mk_eq(&new_var, &expr));
 
 				ExprVal::VarNode(
 					Variable {
@@ -303,6 +323,7 @@ impl Inference {
 
 				let mut new_body = self.infer(Expr {
 					val: l.body.val.clone(),
+					loc: l.body.loc,
 					r#type: get_type_var(),
 				}, constraints);
 
@@ -323,6 +344,8 @@ impl Inference {
 					.map(|a|
 						Parameter {
 							name: a.name,
+							name_loc: a.name_loc,
+							type_loc: a.type_loc,
 							r#type: substitute(&lambda_substitutions, a.r#type),
 						}
 					)
@@ -362,6 +385,7 @@ impl Inference {
 				let new_fn = self.infer(
 					Expr {
 						val: c.func.val,
+						loc: c.func.loc,
 						r#type: new_fn_t,
 					}, constraints
 				);
@@ -372,6 +396,7 @@ impl Inference {
 						.map(|(arg, t)| self.infer(
 								Expr {
 									val: arg.val.clone(),
+									loc: arg.loc,
 									r#type: t,
 								}, constraints
 							)
@@ -389,6 +414,7 @@ impl Inference {
 
 		Expr {
 			val: new_expr_val,
+			loc: expr.loc,
 			r#type: expr.r#type,
 		}
 	}
@@ -398,21 +424,44 @@ impl Inference {
 		let mut member_map = HashMap::new();
 		for constraint in constraints.iter() {
 			match constraint {
-				Constraint::Equal(t1, t2) => unify(&mut substitutions, t1.clone(), t2.clone()),
+				Constraint::Equal((t1, l1), (t2, l2)) => {
+					unify(&mut substitutions, &mut self.errors, t1.clone(), t2.clone(), (*l1, *l2));
+				}
 
-				Constraint::HasMember(t, m) => {
-					member_map.entry(t).or_insert(vec![]).push(m.clone());
+				Constraint::HasMember((t, l1), (m, l2)) => {
+					member_map.entry(t)
+						.or_insert_with(Vec::new)
+						.push((m.clone(), (*l1, *l2)));
 				}
 			}
 		}
 
-		for (t, members) in member_map.into_iter() {
+		for (t, members_locations) in member_map.into_iter() {
 			// TODO: this is where row polymorphism will be added
-			unify(&mut substitutions, t.clone(), Struct(members));
+			// TODO: member_positions is thrown away, but it should be
+			// passed into unify() to track where each member constraint
+			// came from. Probably just refactor so that members are a
+			// proper trait.
+			let locs = members_locations.iter().map(|(_, locs)| *locs).next().unwrap();
+			let members = members_locations.into_iter().map(|(types, _)| types).collect();
+			unify(&mut substitutions, &mut self.errors, t.clone(), Struct(members), locs);
 		}
 
 		substitutions
 	}
+}
+
+fn mk_eq(e1: &Expr, e2: &Expr) -> Constraint {
+	Constraint::Equal(
+		(
+			e1.r#type.clone(),
+			e1.loc
+		),
+		(
+			e2.r#type.clone(),
+			e2.loc
+		)
+	)
 }
 
 pub fn instantiate(
@@ -491,7 +540,15 @@ fn substitute(substitutions: &HashMap<u16, Type>, t: Type) -> Type {
 	}
 }
 
-fn unify(substitutions: &mut HashMap<u16, Type>, t1: Type, t2: Type) {
+// Unifies two types as equal, with origin being the locations that the types came from.
+fn unify(
+	substitutions: &mut HashMap<u16, Type>,
+	errors: &mut Vec<ErrorMessage>,
+	t1: Type,
+	t2: Type,
+	origin: (SourceLoc, SourceLoc)
+) {
+	// TODO: Remove unecessary up-front clone
 	match (t1.clone(), t2.clone()) {
 		(
 			TypeConstructor(TConstructor {
@@ -510,7 +567,7 @@ fn unify(substitutions: &mut HashMap<u16, Type>, t1: Type, t2: Type) {
 				panic!("type constructors with unequal lengths are attempting to be unified, {:#?} and {:#?}", t1, t2);
 			}
 			for (t3, t4) in args1.into_iter().zip(args2.into_iter()) {
-				unify(substitutions, t3, t4);
+				unify(substitutions, errors, t3, t4, origin);
 			}
 		}
 
@@ -525,19 +582,19 @@ fn unify(substitutions: &mut HashMap<u16, Type>, t1: Type, t2: Type) {
 				if a1.name != a2.name {
 					panic!("bad");
 				}
-				unify(substitutions, a1.r#type, a2.r#type);
+				unify(substitutions, errors, a1.r#type, a2.r#type, origin);
 			}
 		}
 
 		(Pointer(box r1), Pointer(box r2)) =>
-			unify(substitutions, r1, r2),
+			unify(substitutions, errors, r1, r2, origin),
 
 		(TypeVar(i), TypeVar(j)) if i == j => {}
 		(TypeVar(i), _) if substitutions.contains_key(&i) => {
-			unify(substitutions, substitutions[&i].clone(), t2)
+			unify(substitutions, errors, substitutions[&i].clone(), t2, origin)
 		}
 		(_, TypeVar(j)) if substitutions.contains_key(&j) => {
-			unify(substitutions, t1, substitutions[&j].clone())
+			unify(substitutions, errors, t1, substitutions[&j].clone(), origin)
 		}
 
 		(TypeVar(i), _) => {
@@ -550,7 +607,15 @@ fn unify(substitutions: &mut HashMap<u16, Type>, t1: Type, t2: Type) {
 		}
 
 		_ if t1 != t2 =>
-			panic!("unified concrete types are not equal in substitutions {:#?}, {:#?} != {:#?}", substitutions, t1, t2),
+			errors.push(ErrorMessage {
+				msg: format!("the underlined expression is a{} `{}`, but it was expected to be a{} `{}` due to the following line:",
+					name_of(&t1),
+					t1,
+					name_of(&t2),
+					t2,
+				),
+				origin: origin.0
+			}),
 		_ => {},
 	}
 }
@@ -713,13 +778,15 @@ impl Expr {
 		}
 	}
 
-	pub fn annotate(&mut self) {
+	pub fn annotate(&mut self) -> Vec<ErrorMessage> {
 		let mut inference = Inference::new();
 		let mut constraints = Vec::new();
 		*self = inference.infer(self.clone(), &mut constraints);
 		inference.substitutions = inference.solve_constraints(&constraints);
 
 		self.annotate_helper(&inference.substitutions, false);
+
+		inference.errors
 	}
 }
 

@@ -5,11 +5,8 @@ use ast::{
 	ExprVal::*,
 	Literal::*
 };
-
 use lex::TokenStream;
-
-use cradle::SourcePos;
-
+use cradle::{SourcePos, SourceLoc};
 use tok::{
 	Token,
 	TokenLiteral::*,
@@ -47,7 +44,7 @@ lazy_static! {
 		]);
 }
 
-fn find_in(id: &str, dict: &Vec<HashMap<String, Type>>) -> Option<Type> {
+fn find_in(id: &str, dict: &[HashMap<String, Type>]) -> Option<Type> {
 	for map in dict {
 		if map.contains_key(id) {
 			return map.get(id).cloned();
@@ -91,8 +88,8 @@ impl TokenStream {
 		match self.peek() {
 			None => panic!("expected token {:?}, found EOF", expected),
 			Some(t) if t.val != expected => panic!(
-				"expected token {:?} at {}, found token {:?}",
-				expected, t.start, t.val
+				"expected token {:?} at {:?}, found token {:?}",
+				expected, t.loc, t.val
 			),
 			_ => {}
 		}
@@ -112,13 +109,16 @@ impl TokenStream {
 		*TYPE_DICT.lock().unwrap() = vec![ HashMap::new() ];
 		let mut parsed = VecDeque::<AST>::new();
 
+		let mut end_loc = 0;
 		while self.peek().is_some() {
+			end_loc = self.peek().unwrap().loc.end;
 			parsed.push_back(self.parse_node());
 			self.skip_token(Punc(';'));
 		}
 
 		Expr {
 			val: ExprVal::BlockNode(parsed),
+			loc: SourceLoc::new(SourcePos::new(), end_loc),
 			r#type: get_type_var(),
 		}
 	}
@@ -156,25 +156,29 @@ impl TokenStream {
 	}
 
 	fn maybe_binary(&mut self, left_expr: Expr, prev_prec: i8) -> Expr {
-		if let Some(tok) = self.peek() {
-			match tok.val {
+		if let Some(op_tok) = self.peek() {
+			match op_tok.val {
 				BinaryOp(InfixFn) => {
 					self.skip_token(BinaryOp(InfixFn));
 				// TODO: MASSIVE BUG HERE. INFIX FNs CANNOT CONTAIN BINARY OP??? AWFUL IMPL
-					let f = new_expr(self.maybe_call(|s| s.parse_atom()).expect_expr().val);
+					let e = self.maybe_call(|s| s.parse_atom()).expect_expr();
+					let f = new_expr(e.loc, e.val);
 					self.skip_token(BinaryOp(InfixFn));
 					let right_expr = self.parse_expr();
-					let parsed = new_expr(CallNode(Call {
-						func: box f,
-						args: VecDeque::from([ left_expr, right_expr ]),
-					}));
+					let parsed = new_expr(
+						left_expr.loc.join(right_expr.loc),
+						CallNode(Call {
+							func: box f,
+							args: VecDeque::from([ left_expr, right_expr ]),
+						})
+					);
 
 					return self.maybe_binary(parsed, -1);
 				}
 
 				BinaryOp(_) | AssignOp(_) => {
 					// TODO: this is a mess, make it not so
-					let (curr_prec, curr_op) = match tok.val {
+					let (curr_prec, curr_op) = match op_tok.val {
 						AssignOp(a) => (0, a),
 						BinaryOp(b) => (precedence(b), b),
 						_ => panic!("unreachable"),
@@ -185,21 +189,22 @@ impl TokenStream {
 						let right_expr =
 							if curr_op == OpID::Member {
 								self.maybe_call(|s|
-									ExprNode(if let Some(tok) = s.peek() {
-										match tok.val {
+									ExprNode(if let Some(operand_tok) = s.peek() {
+										match &operand_tok.val {
 											Ident(member) => {
 												s.skip_token(Ident(member.clone()));
 												new_expr(
+													operand_tok.loc,
 													VarNode(
 														Variable {
-															name: member,
+															name: member.clone(),
 															generics: vec![],
 														}
 													)
 												)
 											}
 
-											_ => panic!("At {}, the dot operator was used with a non-identifier RHS argument.", tok.start)
+											non_id => panic!("At {:?}, the dot operator was used with a non-identifier RHS argument {:#?}.", op_tok.loc, non_id)
 										}
 									} else {
 										panic!("Expected a RHS argument for the dot operator, found EOF");
@@ -211,15 +216,20 @@ impl TokenStream {
 							};
 
 						let parsed = new_expr(
+							left_expr.loc.join(right_expr.loc),
 							match right_expr.val.clone() {
 								CallNode(c) if curr_op == Member => {
 									CallNode(Call {
 										args: c.args,
-										func: box new_expr(BinaryNode(Binary {
-											left: box left_expr,
-											right: c.func,
-											op: curr_op,
-										})),
+										func: box new_expr(
+											SourceLoc::new(left_expr.loc.start, right_expr.loc.start.index),
+											BinaryNode(Binary {
+												left: box left_expr,
+												right: c.func,
+												op: curr_op,
+												op_loc: op_tok.loc,
+											})
+										),
 									})
 								}
 								_ =>
@@ -227,6 +237,7 @@ impl TokenStream {
 										left: Box::new(left_expr),
 										right: Box::new(right_expr),
 										op: curr_op,
+										op_loc: op_tok.loc,
 									}),
 							}
 						);
@@ -243,46 +254,50 @@ impl TokenStream {
 	}
 
 	fn parse_atom(&mut self) -> AST {
-		self.maybe_call(|s| match s.peek().unwrap().val {
-			Punc(p) => match p {
-				'(' => {
-					s.next();
-					let expr = s.parse_expr();
-					s.skip_token(Punc(')'));
-					ExprNode(expr)
-				}
-				'{' => s.parse_block(),
-				'[' => s.parse_struct_literal(),
-				_ => panic!(
-					"unexpected punctuation {:?} at {}",
-					p,
-					s.peek().unwrap().start
-				),
-			},
-			KeyWord(kw) => match kw {
-				KeyWord::If => s.parse_if(),
-				KeyWord::λ => s.parse_lambda(),
-				KeyWord::Let => s.parse_let(),
-				_ => panic!("unexpected keyword {:?}", kw),
-			},
-			Literal(l) => {
-				s.skip_token(Literal(l.clone()));
-				new_expr_ast(LiteralNode(AtomicLiteral(l)))
-			}
-			Ident(_) => {
-				let id = s.parse_id();
-				ExprNode(Expr {
-					val: VarNode(
-						Variable {
-							name: id.clone(),
-							generics: vec![],
-						}
+		self.maybe_call(|s| {
+			let loc = s.peek().unwrap().loc;
+			match s.peek().unwrap().val {
+				Punc(p) => match p {
+					'(' => {
+						s.next();
+						let expr = s.parse_expr();
+						s.skip_token(Punc(')'));
+						ExprNode(expr)
+					}
+					'{' => s.parse_block(),
+					'[' => s.parse_struct_literal(),
+					_ => panic!(
+						"unexpected punctuation {:?} at {:?}",
+						p,
+						s.peek().unwrap().loc
 					),
-					r#type: find_in(&id, &*VAR_TYPES.lock().unwrap()).unwrap()
-				})
+				},
+				KeyWord(kw) => match kw {
+					KeyWord::If => s.parse_if(),
+					KeyWord::λ => s.parse_lambda(),
+					KeyWord::Let => s.parse_let(),
+					_ => panic!("unexpected keyword {:?}", kw),
+				},
+				Literal(l) => {
+					s.skip_token(Literal(l.clone()));
+					new_expr_ast(loc, LiteralNode(AtomicLiteral(l)))
+				}
+				Ident(_) => {
+					let id = s.parse_id();
+					ExprNode(Expr {
+						val: VarNode(
+							Variable {
+								name: id.clone(),
+								generics: vec![],
+							}
+						),
+						loc,
+						r#type: find_in(&id, &*VAR_TYPES.lock().unwrap()).unwrap()
+					})
+				}
+				UnaryOp(u) => s.parse_unary(u),
+				_ => panic!("unexpected token {:?}", s.peek().unwrap()),
 			}
-			UnaryOp(u) => s.parse_unary(u),
-			_ => panic!("unexpected token {:?}", s.peek().unwrap()),
 		})
 	}
 
@@ -345,27 +360,31 @@ impl TokenStream {
 	fn declare_var(&mut self) -> Parameter {
 		if let Some(Token {
 			val: Ident(id),
-			start: pos,
-			..
+			loc: name_loc,
 		}) = self.next()
 		{
 			if find_in(&id, &*VAR_TYPES.lock().unwrap()).is_some() {
 				// making sure declared var does not already exist
 				panic!(
-					"variable {} was already declared, but was declared again at {}",
-					id, pos
+					"variable {} was already declared, but was declared again at {:?}",
+					id, name_loc
 				);
 			}
-			let var_type = match self.peek() {
+			let (var_type, type_loc) = match self.peek() {
 				Some(t) if t.val == Punc(':') => {
+					let mut type_loc = t.loc;
 					self.skip_token(Punc(':'));
-					self.parse_type()
+					let var_type = self.parse_type();
+					type_loc.end = self.peek().unwrap().loc.start.index;
+					(var_type, Some(type_loc))
 				}
-				_ => get_type_var()
+				_ => (get_type_var(), None)
 			};
 			let var = Parameter {
 				name: id,
 				r#type: var_type,
+				name_loc,
+				type_loc,
 			};
 
 			insert_in(var.name.clone(), var.r#type.clone(), &mut *VAR_TYPES.lock().unwrap());
@@ -378,23 +397,23 @@ impl TokenStream {
 	fn parse_id(&mut self) -> String {
 		if let Some(Token {
 			val: Ident(id),
-			start: pos,
-			..
+			loc
 		}) = self.next()
 		{
 			if find_in(&id, &*VAR_TYPES.lock().unwrap()).is_some() {
 				return id;
 			} else {
-				panic!("identifier {} at {} was used before declaration", id, pos);
+				panic!("identifier {} at {:?} was used before declaration", id, loc);
 			}
 		}
 		panic!(
-			"expected identifier of a declared variable at {}",
-			self.peek().unwrap().start
+			"expected identifier of a declared variable at {:?}",
+			self.peek().unwrap().loc
 		);
 	}
 
 	fn parse_if(&mut self) -> AST {
+		let begin_pos = self.peek().unwrap().loc.start;
 		self.skip_token(KeyWord(KeyWord::If));
 		let mut parsed = IfElse {
 			cond: Box::new(self.parse_expr()),
@@ -402,21 +421,26 @@ impl TokenStream {
 			r#else: None,
 		};
 
+		let mut end_pos = parsed.then.loc.end;
 		if let Some(Token {
 			val: KeyWord(KeyWord::Else),
-			..
+			loc: else_loc,
 		}) = self.peek()
 		{
+			end_pos = else_loc.end;
 			self.next();
 			parsed.r#else = Some(Box::new(self.parse_expr()));
 		}
 
-		new_expr_ast(IfNode(parsed))
+		new_expr_ast(SourceLoc::new(begin_pos, end_pos), IfNode(parsed))
 	}
 
 	fn parse_block(&mut self) -> AST {
 		new_stack_in(&mut *VAR_TYPES.lock().unwrap());
+		let begin_pos = self.peek().unwrap().loc.start;
+		let mut end_pos = self.peek().unwrap().loc.end;
 		let parsed = self.delimited(Punc('{'), Punc('}'), Punc(';'), |s| {
+			end_pos = s.peek().unwrap().loc.end;
 			s.parse_node()
 		});
 		pop_stack_in(&mut *VAR_TYPES.lock().unwrap());
@@ -424,21 +448,29 @@ impl TokenStream {
 		match parsed.len() {
 			0 => panic!("empty block :/"),
 			1 => parsed.front().unwrap().clone(),
-			_ => new_expr_ast(BlockNode(parsed)),
+			_ => new_expr_ast(
+				SourceLoc::new(begin_pos, end_pos),
+				BlockNode(parsed)
+			),
 		}
 	}
 
 	fn parse_struct_literal(&mut self) -> AST {
+		let begin_pos = self.peek().unwrap().loc.start;
+		let mut end_pos = self.peek().unwrap().loc.end;
 		let struct_args = self.delimited(Punc('['), Punc(']'), Punc(','), |s| {
 			let possibly_name = s.next();
 
 			let name = match possibly_name {
 				Some(Token {
 					val: Ident(name),
-					..
-				}) => name,
+					loc
+				}) => {
+					end_pos = loc.end;
+					name
+				}
 
-				Some(nonsense) => panic!("expected a name for member of structure literal at {}, found {:#?}", nonsense.start, nonsense),
+				Some(nonsense) => panic!("expected a name for member of structure literal at {:#?}, found {:#?}", nonsense.loc, nonsense),
 
 				None => panic!("expected a name for member of structure literal, found EOF"),
 			};
@@ -452,6 +484,7 @@ impl TokenStream {
 		});
 
 		new_expr_ast(
+			SourceLoc::new(begin_pos, end_pos),
 			LiteralNode(
 				StructLiteral(struct_args.into())
 			)
@@ -459,54 +492,78 @@ impl TokenStream {
 	}
 
 	fn parse_lambda(&mut self) -> AST {
+		let begin_pos = self.peek().unwrap().loc;
 		self.skip_token(KeyWord(KeyWord::λ));
 		new_stack_in(&mut *VAR_TYPES.lock().unwrap());
-		let lambda_expr = new_expr_ast(LambdaNode(Lambda {
-				args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
-				generics: vec![],
-				body: Box::new(self.parse_expr()),
-			}));
+
+		let lambda_val = Lambda {
+			args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
+			generics: vec![],
+			body: Box::new(self.parse_expr()),
+		};
 		pop_stack_in(&mut *VAR_TYPES.lock().unwrap());
-		lambda_expr
+		new_expr_ast(begin_pos.join(lambda_val.body.loc), LambdaNode(lambda_val))
 	}
 
 	fn parse_call(&mut self, f: Expr) -> AST {
-		new_expr_ast(CallNode(Call {
+		let begin_pos = self.peek().unwrap().loc.start;
+		let call_val = Call {
 			func: Box::new(f),
-			args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.parse_expr()),
-		}))
+			args: self.delimited(Punc('('), Punc(')'), Punc(','), |s|
+				s.parse_expr()
+			),
+		};
+		new_expr_ast(
+			SourceLoc::new(begin_pos, self.peek().unwrap().loc.start.index),
+			CallNode(call_val)
+		)
 	}
 
 	fn parse_unary(&mut self, op: UOpID) -> AST {
+		let op_loc = self.peek().unwrap().loc;
 		self.skip_token(UnaryOp(op));
+
+	// TODO: Refactor so that this doesn't cancel some unary operators,
+	// that should be left to the optimizer (which needs written)
 		if let Some(tok) = self.peek() {
 			match tok.val {
 				Literal(l) => {
 					self.skip_token(Literal(l.clone()));
 					if op == Neg {
-						return new_expr_ast(LiteralNode(match l {
-							IntLit(i) => AtomicLiteral(IntLit(-i)),
-							FltLit(f) => AtomicLiteral(FltLit(-f)),
-							_ => panic!(
-								"Usage of unary minus operator `-` on a non-numeric value at {}",
-								tok.start
-							),
-						}));
+						return new_expr_ast(
+							op_loc.join(tok.loc),
+							LiteralNode(match l {
+								IntLit(i) => AtomicLiteral(IntLit(-i)),
+								FltLit(f) => AtomicLiteral(FltLit(-f)),
+								_ => panic!(
+									"Usage of unary minus operator `-` on a non-numeric literal at {:#?}",
+									tok.loc
+								),
+							})
+						);
 					} else if op == Not {
-						return new_expr_ast(LiteralNode(match l {
-							BoolLit(b) => AtomicLiteral(BoolLit(!b)),
-							_ => panic!(
-								"Usage of not operator `!` on a non-boolean value at {}",
-								tok.start
-							),
-						}));
+						return new_expr_ast(
+							op_loc.join(tok.loc),
+							LiteralNode(match l {
+								BoolLit(b) => AtomicLiteral(BoolLit(!b)),
+								_ => panic!(
+									"Usage of not operator `!` on a non-boolean value at {:#?}",
+									tok.loc
+								),
+							})
+						);
 					}
 				}
 				_ => {
-					return new_expr_ast(UnaryNode(Unary {
-						op,
-						expr: Box::new(self.parse_atom().expect_expr()),
-					}))
+					let expr = box self.parse_atom().expect_expr();
+					return new_expr_ast(
+						op_loc.join(expr.loc),
+						UnaryNode(Unary {
+							op,
+							op_loc,
+							expr,
+						})
+					)
 				}
 			}
 		}
@@ -547,7 +604,7 @@ impl TokenStream {
 						Some(Token { val: Ident(id), .. }) =>
 							format!("'{}", id),
 						Some(non_id) =>
-							panic!("expected an identifier for a generic type at {}, found {:#?}", non_id.start, non_id.val),
+							panic!("expected an identifier for a generic type at {:#?}, found {:#?}", non_id.loc, non_id.val),
 						None =>
 							panic!("expected an identifier for a generic type, found EOF")
 					};
@@ -569,8 +626,7 @@ impl TokenStream {
 				Punc('[') => {
 					self.0.push_front(Token {
 						val: Punc('['),
-						start: SourcePos::new(),
-						end: SourcePos::new(),
+						loc: SourceLoc::nonexistent(),
 					}); // a dummy token to allow for the delimited() call below.
 					Type::Struct(
 						self.delimited(Punc('['), Punc(']'), Punc(','), |s| {
@@ -579,7 +635,7 @@ impl TokenStream {
 									Some(Token { val: Ident(id), .. }) =>
 										id,
 									Some(not_a_name) =>
-										panic!("At {}, non-identifier {:?} was used as a member for a structure type", not_a_name.start, not_a_name.val),
+										panic!("At {:?}, non-identifier {:?} was used as a member for a structure type", not_a_name.loc, not_a_name.val),
 									None =>
 										panic!("Expected an identifier as a member for a struct type, found EOF"),
 								};
@@ -596,7 +652,7 @@ impl TokenStream {
 				UnaryOp(Ref) =>
 					Type::Pointer(box self.parse_type()),
 
-				non_type => panic!("expected type at {}, received {:?}", tok.start, non_type),
+				non_type => panic!("expected type at {:?}, received {:?}", tok.loc, non_type),
 			},
 
 			None => panic!("expected a type, received EOF"),
@@ -628,13 +684,14 @@ pub fn get_type_var() -> Type {
 	Type::TypeVar(TYPE_VAR_COUNTER.fetch_add(1, Ordering::SeqCst))
 }
 
-fn new_expr_ast(value: ExprVal) -> AST {
-	ExprNode(new_expr(value))
+fn new_expr_ast(loc: SourceLoc, value: ExprVal) -> AST {
+	ExprNode(new_expr(loc, value))
 }
 
-fn new_expr(value: ExprVal) -> Expr {
+fn new_expr(loc: SourceLoc, value: ExprVal) -> Expr {
 	Expr {
 		val: value,
+		loc,
 		r#type: get_type_var(),
 	}
 }

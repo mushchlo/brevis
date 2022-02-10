@@ -2,118 +2,133 @@ use unify::Constraint;
 use ast::{
 	Unary,
 	Binary,
+	Expr,
 	ExprVal,
 	Type,
 	Type::*,
 	AggregateType,
 };
 use tok::{
-	OpID,
 	OpID::*,
-	UOpID,
 	UOpID::*,
 };
 use parse::get_type_var;
 
 
 impl Binary {
-	pub fn associations(&self) -> Vec<Constraint> {
-		let (left_t, right_t) = (self.left.r#type.clone(), self.right.r#type.clone());
-		match self.op {
-			Eq | Doeq | Noteq => vec![ Constraint::Equal(left_t, right_t) ],
+	pub fn associations(&self, result: &Expr) -> Vec<Constraint> {
+		let (left, right) = (
+			(self.left.r#type.clone(), self.left.loc),
+			(self.right.r#type.clone(), self.right.loc)
+		);
+		let mut ret = match self.op {
+			Eq | Doeq | Noteq => vec![ Constraint::Equal(left, right) ],
 			Gt | Lt | Gteq | Lteq => vec![
-				Constraint::Equal(left_t, right_t),
+				Constraint::Equal(left, right),
 			],
 
 			And | Or | Xor => vec![
-				Constraint::Equal(left_t, right_t),
+				Constraint::Equal(left, right),
 			],
 
 			Add | Sub | Mul | Div => vec![
-				Constraint::Equal(left_t, right_t),
+				Constraint::Equal(left, right),
 			],
 
 			Mod => vec![
-				Constraint::Equal(left_t, right_t.clone()),
-				Constraint::Equal(right_t, Int)
+				Constraint::Equal(left, right.clone()),
+				Constraint::Equal(right, (Int, self.op_loc))
 			],
 
 			Concat => vec![
-				Constraint::Equal(left_t.clone(), right_t),
-				Constraint::Equal(left_t, Str)
+				Constraint::Equal(left.clone(), right),
+				Constraint::Equal(left, (Str, self.op_loc))
 			],
 
 			Member => {
-				let name = match &self.right.val {
-					ExprVal::VarNode(s) => s.name.clone(),
+				let new_right = match &self.right.val {
+					ExprVal::VarNode(s) => (
+						AggregateType {
+							name: s.name.clone(),
+							r#type: right.0,
+						},
+						right.1
+					),
 					_ => panic!("unreachable")
 				};
 
 				vec![
-					Constraint::HasMember(
-						left_t,
-						AggregateType {
-							name,
-							r#type: right_t,
-						}
-					)
+					Constraint::HasMember(left, new_right)
 				]
 			}
 
 			InfixFn => panic!("no"),
-		}
-	}
-}
+		};
+		ret.push(self.result_constraint(result));
 
-impl OpID {
-	pub fn result(&self, left: Type, right: Type) -> Type {
-		match *self {
+		ret
+	}
+
+	pub fn result_constraint(&self, result: &Expr) -> Constraint {
+		let result_t = match self.op {
 			Eq => Type::Void,
 
 			Gt | Lt | Gteq | Lteq | Doeq | Noteq | And | Or | Xor => Type::Bool,
-
-			Add | Sub | Mul | Div => left,
+			Add | Sub | Mul | Div => self.left.r#type.clone(),
 			Mod => Type::Int,
-
 			Concat => Type::Str,
+			Member => self.right.r#type.clone(),
 
-			Member => right,
+			InfixFn => panic!("no")
+		};
 
-			_ => panic!("Unary operator had a requested binary result type")
-		}
+		Constraint::Equal(
+			(result_t, result.loc),
+			(result.r#type.clone(), self.op_loc),
+		)
 	}
 }
 
 impl Unary {
-	pub fn associations(&self, expr_t: Type) -> Vec<Constraint> {
-		let operand_t = self.expr.r#type.clone();
-		match self.op {
+	pub fn associations(&self, result: &Expr) -> Vec<Constraint> {
+		let (operand_t, operand_loc) = (self.expr.r#type.clone(), self.expr.loc);
+		let mut ret = match self.op {
 			Not =>
 				vec![
-					Constraint::Equal(operand_t, Type::Bool),
+					Constraint::Equal(
+						(operand_t, operand_loc),
+						(Type::Bool, self.op_loc)
+					),
 				],
 			Neg =>
 				vec![],
 			At =>
 				vec![
 					Constraint::Equal(
-						Type::Pointer(box expr_t),
-						operand_t
+						(operand_t, operand_loc),
+						(Type::Pointer(box result.r#type.clone()), self.op_loc)
 					),
 				],
 			Ref => vec![],
-		}
-	}
-}
+		};
 
-impl UOpID {
-	pub fn result(&self, operand_t: Type) -> Type {
-		match *self {
+		ret.push(self.result_constraint(result));
+
+		ret
+	}
+
+	pub fn result_constraint(&self, result: &Expr) -> Constraint {
+		let result_t = match self.op {
 			Not => Type::Bool,
-			Neg => operand_t,
+			Neg => self.expr.r#type.clone(),
 			At => get_type_var(),
-			Ref => Type::Pointer(box operand_t),
-		}
+			Ref => Type::Pointer(box self.expr.r#type.clone()),
+		};
+
+		Constraint::Equal(
+			(result_t, self.op_loc),
+			(result.r#type.clone(), result.loc)
+		)
 	}
 }
 

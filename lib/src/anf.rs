@@ -1,12 +1,12 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use crate::{
-	ast::{
-		*,
-		AST::*,
-		ExprVal::*
-	},
+
+use ast::{
+	*,
+	AST::*,
+	ExprVal::*
 };
+use cradle::SourceLoc;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -33,6 +33,9 @@ pub fn anfify(a: AST) -> AST {
 pub fn anfify_expr(e: Expr) -> Expr {
 	Expr {
 		r#type: e.r#type.clone(),
+	// This is an expression wildly different from the source code,
+	// so there's not really a source position to store.
+		loc: e.loc,
 		val:
 			match e.val {
 				LiteralNode(lit) => LiteralNode(lit),
@@ -57,11 +60,13 @@ pub fn anfify_expr(e: Expr) -> Expr {
 				UnaryNode(u) =>
 					UnaryNode(Unary {
 						op: u.op,
+						op_loc: u.op_loc,
 						expr: Box::new(anfify_expr(*u.expr))
 					}),
 				BinaryNode(b) =>
 					BinaryNode(Binary {
 						op: b.op,
+						op_loc: b.op_loc,
 						left: Box::new(anfify_expr(*b.left.clone())),
 						right: Box::new(anfify_expr(*b.right)),
 					}),
@@ -79,6 +84,9 @@ pub fn anfify_expr(e: Expr) -> Expr {
 										var:
 											Parameter {
 												name: name.clone(),
+											// Zero values, as the variable doesn't exist in the source code.
+												name_loc: SourceLoc::nonexistent(),
+												type_loc: None,
 												r#type: arg.r#type.clone()
 											},
 										def:
@@ -94,6 +102,7 @@ pub fn anfify_expr(e: Expr) -> Expr {
 											generics: vec![],
 										}
 									),
+									loc: SourceLoc::nonexistent(),
 									r#type: arg.r#type.clone()
 								}
 							}
@@ -103,9 +112,9 @@ pub fn anfify_expr(e: Expr) -> Expr {
 						ExprNode(Expr {
 							val: CallNode(Call {
 								args: trivial_args,
-							//	type_args: Vec::new(),
 								func: Box::new(anfify_expr(*c.func))
 							}),
+							loc: SourceLoc::nonexistent(),
 							r#type: e.r#type
 						})
 					);

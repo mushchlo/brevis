@@ -4,6 +4,7 @@ use std::collections::{
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use cradle::SourceLoc;
 use ast::{
 	AST,
 	Literal::*,
@@ -139,6 +140,10 @@ impl Expr {
 						AST::LetNode(Let {
 							var: Parameter {
 								name: monomorphized_name.clone(),
+							// These are zero values, as this variable doesn't
+							// exist in the source code.
+								name_loc: SourceLoc::nonexistent(),
+								type_loc: None,
 								r#type: mono_fn.r#type.clone(),
 							},
 							def: Some(box mono_fn)
