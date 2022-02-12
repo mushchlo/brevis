@@ -4,18 +4,20 @@ use std::collections::{
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use cradle::SourceLoc;
-use ast::{
-	AST,
-	Literal::*,
-	Expr,
-	ExprVal::*,
-	Type,
-	Let,
-	Parameter,
-	Variable,
+use crate::{
+	lex::cradle::SourceLoc,
+	parse::ast::{
+		AST,
+		Literal::*,
+		Expr,
+		ExprVal::*,
+		Type,
+		Let,
+		Parameter,
+		Variable,
+	},
+	core::core_vals,
 };
-use core::core_vals;
 
 
 static MONOMORPHIZE_COUNTER: AtomicUsize = AtomicUsize::new(0);

@@ -1,12 +1,14 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ast::{
-	*,
-	AST::*,
-	ExprVal::*
+use crate::{
+	parse::ast::{
+		*,
+		AST::*,
+		ExprVal::*,
+	},
+	lex::cradle::SourceLoc,
 };
-use cradle::SourceLoc;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -53,8 +55,9 @@ pub fn anfify_expr(e: Expr) -> Expr {
 					),
 				LambdaNode(l) =>
 					LambdaNode(Lambda {
-						args: l.args.clone(),
-						generics: l.generics.clone(),
+						args: l.args,
+						generics: l.generics,
+						captured: l.captured,
 						body: Box::new(anfify_expr(*l.body))
 					}),
 				UnaryNode(u) =>
@@ -67,32 +70,30 @@ pub fn anfify_expr(e: Expr) -> Expr {
 					BinaryNode(Binary {
 						op: b.op,
 						op_loc: b.op_loc,
-						left: Box::new(anfify_expr(*b.left.clone())),
-						right: Box::new(anfify_expr(*b.right)),
+						left: box anfify_expr(*b.left),
+						right: box anfify_expr(*b.right),
 					}),
 				CallNode(c) => {
 					let mut block = VecDeque::new();
 					let mut trivial_args = VecDeque::new();
-					for arg in c.args.iter() {
-						trivial_args.push_back(match arg.val.clone() {
-							LiteralNode(_) | VarNode(_) => arg.clone(),
+					for arg in c.args.into_iter() {
+						trivial_args.push_back(match &arg.val {
+							LiteralNode(_) | VarNode(_) => arg,
 
 							_ => {
 								let name = unique_name();
+								let cloned_arg_t = arg.r#type.clone();
 								block.push_back(
 									LetNode(Let {
 										var:
 											Parameter {
 												name: name.clone(),
-											// Zero values, as the variable doesn't exist in the source code.
+											// Zero values, as this variable doesn't exist in the source code.
 												name_loc: SourceLoc::nonexistent(),
 												type_loc: None,
 												r#type: arg.r#type.clone()
 											},
-										def:
-											Some(Box::new(
-												anfify_expr(arg.clone())
-											))
+										def: Some(box anfify_expr(arg))
 									})
 								);
 								Expr {
@@ -103,7 +104,7 @@ pub fn anfify_expr(e: Expr) -> Expr {
 										}
 									),
 									loc: SourceLoc::nonexistent(),
-									r#type: arg.r#type.clone()
+									r#type: cloned_arg_t,
 								}
 							}
 						});

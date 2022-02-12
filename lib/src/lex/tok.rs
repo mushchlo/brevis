@@ -1,4 +1,4 @@
-use cradle::SourceLoc;
+use crate::lex::cradle::SourceLoc;
 
 #[derive(Debug, Clone)]
 pub struct Token {
@@ -71,6 +71,8 @@ pub enum KeyWord {
 	Let,
 	If,
 	Else,
+	Void,
+	Bool,
 	Int,
 	Float,
 	String,
@@ -84,6 +86,8 @@ pub const KEYWORD_DICT: &[(KeyWord, &str)] = &[
 	(KeyWord::Let, "let"),
 	(KeyWord::If, "if"),
 	(KeyWord::Else, "else"),
+	(KeyWord::Void, "void"),
+	(KeyWord::Bool, "bool"),
 	(KeyWord::Int, "int"),
 	(KeyWord::Float, "float"),
 	(KeyWord::String, "string"),

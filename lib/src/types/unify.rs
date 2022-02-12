@@ -7,35 +7,37 @@ use std::{
 	},
 };
 
-use ast::{
-	Expr,
-	ExprVal,
-	Let,
-	Lambda,
-	IfElse,
-	Call,
-	Binary,
-	Unary,
-	Variable,
-	Parameter,
-	TConstructor,
-	GenericType,
-	Type,
-	Type::*,
-	Aggregate,
-	AggregateType,
-	Literal::*,
-	AST,
+use crate::{
+	parse::ast::{
+		Expr,
+		ExprVal,
+		Let,
+		Lambda,
+		IfElse,
+		Call,
+		Binary,
+		Unary,
+		Variable,
+		Parameter,
+		TConstructor,
+		GenericType,
+		Type,
+		Type::*,
+		Aggregate,
+		AggregateType,
+		Literal::*,
+		AST,
+	},
+	lex::tok::{
+		TokenLiteral::*,
+		OpID,
+	},
+	parse::get_type_var,
+	core::core_vals,
+	lex::cradle::SourceLoc,
+	error::ErrorMessage,
+	types::typeprint::name_of,
 };
-use tok::{
-	TokenLiteral::*,
-	OpID,
-};
-use parse::get_type_var;
-use core::core_vals;
-use cradle::SourceLoc;
-use error::ErrorMessage;
-use typeprint::name_of;
 
 
 struct Inference {
@@ -87,13 +89,6 @@ impl Inference {
 	fn infer_ast(&mut self, a: AST, constraints: &mut Vec<Constraint>) -> AST {
 		match a {
 			AST::LetNode(mut l) => {
-				l.def =
-					l.def.clone().map(|def| {
-						let new_def = self.infer(*def.clone(), constraints);
-						constraints.push(mk_eq(&def, &new_def));
-						l.var.r#type = new_def.r#type.clone();
-						box new_def
-					});
 				let generics =
 					match l.def.clone() {
 						Some(e) => match e.val {
@@ -108,6 +103,13 @@ impl Inference {
 						generics
 					}
 				);
+				l.def =
+					l.def.clone().map(|def| {
+						let new_def = self.infer(*def.clone(), constraints);
+						constraints.push(mk_eq(&def, &new_def));
+						l.var.r#type = new_def.r#type.clone();
+						box new_def
+					});
 				AST::LetNode(l)
 			}
 			AST::ExprNode(e) =>
@@ -183,14 +185,6 @@ impl Inference {
 
 				let mut op_constraints = b.associations(&expr);
 				constraints.append(&mut op_constraints);
-		// TODO: Do we even need this? It's horrible
-/*
-				if let Struct(s) = new_left.r#type.clone() {
-					if let Some(i) = s.iter().position(|a| matches!(b.right.val.clone(), ExprVal::VarNode(s) if s.name == a.name)) {
-						constraints.push(mk_eq(&b.right, &s[i]));
-					}
-				}
-*/
 
 				ExprVal::BinaryNode(
 					Binary {
@@ -249,6 +243,14 @@ impl Inference {
 					constraints.push(mk_eq(&new_then, &tmp));
 					box tmp
 				});
+				if new_else.is_none() {
+					constraints.push(
+						Constraint::Equal(
+							(new_then.r#type.clone(), new_then.loc),
+							(Void, SourceLoc::new(expr.loc.start, new_cond.loc.start.index))
+						)
+					)
+				}
 				constraints.push(mk_eq(&new_then, &i.then));
 				constraints.push(mk_eq(&new_then, &expr));
 				constraints.push(mk_eq(&new_cond, &i.cond));
@@ -359,6 +361,7 @@ impl Inference {
 					Lambda {
 						args: new_args,
 						generics: vec![],
+						captured: l.captured,
 						body: box new_body,
 					}
 				);
@@ -649,16 +652,19 @@ fn generalize(
 	) -> Lambda {
 	let mut outer_env = env.to_vec();
 	outer_env.pop();
+print!("{:#?} is outer_env", outer_env);
 	let free_in_env = free_in_env(substitutions, outer_env);
-
+print!(", {:#?} is substitutions", substitutions);
 	let generic_type_vars =
 		free_in_type(substitutions, t).into_iter()
 			.filter(|free_t| !free_in_env.contains(free_t))
 			.collect();
+println!(", for fn with args {:#?} env {:#?} generics {:#?}", l.args, free_in_env, generic_type_vars);
 
 	Lambda {
 		body: l.body,
 		args: l.args,
+		captured: l.captured,
 		generics: generic_type_vars,
 	}
 }
@@ -713,6 +719,17 @@ fn free_in_env(
 }
 
 impl Expr {
+	pub fn annotate(&mut self) -> Vec<ErrorMessage> {
+		let mut inference = Inference::new();
+		let mut constraints = Vec::new();
+		*self = inference.infer(self.clone(), &mut constraints);
+		inference.substitutions = inference.solve_constraints(&constraints);
+
+		self.annotate_helper(&inference.substitutions, false);
+
+		inference.errors
+	}
+
 	pub fn annotate_helper(&mut self, substitutions: &HashMap<u16, Type>, annotate_lambdas: bool) {
 		self.r#type = substitute(substitutions, self.r#type.clone());
 		match self.val {
@@ -776,17 +793,6 @@ impl Expr {
 				u.expr.annotate_helper(substitutions, annotate_lambdas);
 			}
 		}
-	}
-
-	pub fn annotate(&mut self) -> Vec<ErrorMessage> {
-		let mut inference = Inference::new();
-		let mut constraints = Vec::new();
-		*self = inference.infer(self.clone(), &mut constraints);
-		inference.substitutions = inference.solve_constraints(&constraints);
-
-		self.annotate_helper(&inference.substitutions, false);
-
-		inference.errors
 	}
 }
 

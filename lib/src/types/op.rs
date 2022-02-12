@@ -1,18 +1,22 @@
-use unify::Constraint;
-use ast::{
-	Unary,
-	Binary,
-	Expr,
-	ExprVal,
-	Type,
-	Type::*,
-	AggregateType,
+use crate::{
+	types::unify::Constraint,
+	lex::tok::{
+		OpID::*,
+		UOpID::*,
+	},
+	parse::{
+		get_type_var,
+		ast::{
+			Unary,
+			Binary,
+			Expr,
+			ExprVal,
+			Type,
+			Type::*,
+			AggregateType,
+		},
+	},
 };
-use tok::{
-	OpID::*,
-	UOpID::*,
-};
-use parse::get_type_var;
 
 
 impl Binary {

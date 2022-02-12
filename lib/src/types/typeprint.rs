@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ast::{
+use crate::parse::ast::{
 	Type,
 	Type::*,
 };

@@ -1,24 +1,30 @@
-use ast::{
-	*,
-	Type::*,
-	AST::*,
-	ExprVal::*,
-	Literal::*
+pub mod ast;
+
+use crate::{
+	parse::ast::{
+		*,
+		Type::*,
+		AST::*,
+		ExprVal::*,
+		Literal::*
+	},
+	lex::{
+		TokenStream,
+		cradle::{SourcePos, SourceLoc},
+		tok::{
+			Token,
+			TokenLiteral::*,
+			TokenValue,
+			TokenValue::*,
+			KeyWord,
+			OpID,
+			OpID::*,
+			UOpID,
+			UOpID::*,
+		},
+	},
+	core::core_vals,
 };
-use lex::TokenStream;
-use cradle::{SourcePos, SourceLoc};
-use tok::{
-	Token,
-	TokenLiteral::*,
-	TokenValue,
-	TokenValue::*,
-	KeyWord,
-	OpID,
-	OpID::*,
-	UOpID,
-	UOpID::*,
-};
-use core::core_vals;
 
 use lazy_static::lazy_static;
 use std::collections::{HashMap, VecDeque};
@@ -119,7 +125,7 @@ impl TokenStream {
 		Expr {
 			val: ExprVal::BlockNode(parsed),
 			loc: SourceLoc::new(SourcePos::new(), end_loc),
-			r#type: get_type_var(),
+			r#type: Void,
 		}
 	}
 
@@ -499,6 +505,7 @@ impl TokenStream {
 		let lambda_val = Lambda {
 			args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
 			generics: vec![],
+			captured: vec![],
 			body: Box::new(self.parse_expr()),
 		};
 		pop_stack_in(&mut *VAR_TYPES.lock().unwrap());
@@ -574,6 +581,8 @@ impl TokenStream {
 		match self.next() {
 			Some(tok) => match tok.val {
 				KeyWord(kw) => match kw {
+					KeyWord::Void => Type::Void,
+					KeyWord::Bool => Type::Bool,
 					KeyWord::Int => Type::Int,
 					KeyWord::Float => Type::Float,
 					KeyWord::String => Type::Str,

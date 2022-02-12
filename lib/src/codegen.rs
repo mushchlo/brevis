@@ -5,19 +5,21 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::iter;
 
-use ast::{
-	*,
-	ExprVal::*,
-	Type,
-	Type::*,
-	Literal::*,
-};
-use tok::{
-	TokenLiteral,
-	TokenLiteral::*,
-	OpID,
-	OpID::*,
-	UOpID::*,
+use crate::{
+	parse::ast::{
+		*,
+		ExprVal::*,
+		Type,
+		Type::*,
+		Literal::*,
+	},
+	lex::tok::{
+		TokenLiteral,
+		TokenLiteral::*,
+		OpID,
+		OpID::*,
+		UOpID::*,
+	},
 };
 
 use core::core_vals;

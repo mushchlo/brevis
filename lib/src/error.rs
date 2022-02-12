@@ -1,16 +1,17 @@
-use cradle::SourceLoc;
+use crate::lex::cradle::SourceLoc;
 
 pub struct ErrorMessage {
 	pub msg: String,
 	pub origin: SourceLoc,
 }
 
-pub fn print_error(source: &str, err: ErrorMessage) {
-	eprintln!("At {}, {}\n{}\n",
+pub fn print_error<F>(source: &str, err: ErrorMessage, errfn: F)
+where F: Fn(String) {
+	errfn(format!("At {}, {}\n{}\n",
 		err.origin.start,
 		err.msg,
 		get_context(source, err.origin)
-	);
+	));
 }
 
 fn get_context(source: &str, err_loc: SourceLoc) -> String {

@@ -13,17 +13,18 @@ fn main() {
 		panic!("please specify at least one source file");
 	}
 
-	let compile: Box<dyn Fn(String) -> String> =
+	let (core, target) =
 		if env::args().any(|s| s == "-9") {
-			Box::new(|s| brevislib::compile_c(s, core::CORE_FNS_9))
+			(core::CORE_FNS_9, "c")
 		} else if env::args().any(|s| s == "-js") {
-			Box::new(|s| brevislib::compile_js(s, core::CORE_FNS_JS))
+			(core::CORE_FNS_JS, "js")
    		} else {
-			Box::new(|s| brevislib::compile_c(s, core::CORE_FNS_POSIX))
+			(core::CORE_FNS_POSIX, "c")
 		};
 
 	let contents = fs::read_to_string(env::args().last().unwrap()).expect("failed to open/read file");
-	println!("{}", compile(contents));
+	let compiled = brevislib::compile(&contents, core, target, |e| eprintln!("{}", e));
+	println!("{}", compiled);
 
 }
 
@@ -71,7 +72,7 @@ mod tests {
 					.expect("failed to find output file");
 
 			let compiled_c =
-				brevislib::compile_c(fs::read_to_string(file.clone() + ".bv").unwrap(), core::CORE_FNS_POSIX);
+				brevislib::compile(fs::read_to_string(file.clone() + ".bv").unwrap(), core::CORE_FNS_POSIX, "c");
 
 
 			let mut gcc_out = BufReader::new(gcc.stdout.take().unwrap());

@@ -2,12 +2,14 @@ use std::collections::{
 	VecDeque,
 };
 
-use tok::{
-	TokenLiteral,
-	OpID,
-	UOpID,
+use crate::lex::{
+	tok::{
+		TokenLiteral,
+		OpID,
+		UOpID,
+	},
+	cradle::SourceLoc,
 };
-use cradle::SourceLoc;
 
 #[derive(Clone, Debug)]
 pub enum AST {
@@ -83,6 +85,7 @@ pub struct Unary {
 pub struct Lambda {
 	pub args: VecDeque<Parameter>,
 	pub generics: Vec<u16>,
+	pub captured: Vec<Variable>,
 	pub body: Box<Expr>,
 }
 

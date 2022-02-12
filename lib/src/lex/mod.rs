@@ -1,8 +1,11 @@
 use std::collections::VecDeque;
 
-use cradle::{CharsPos, SourceLoc, SourcePos};
+pub mod cradle;
+pub mod tok;
 
-use tok::{
+use crate::lex::cradle::{CharsPos, SourceLoc, SourcePos};
+
+use crate::lex::tok::{
 	Token,
 	TokenValue,
 	TokenValue::*,
