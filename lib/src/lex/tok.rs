@@ -71,6 +71,7 @@ pub enum KeyWord {
 	Let,
 	If,
 	Else,
+// TODO: eventually, the unit type will be empty struct. it is dumb to have two unit values.
 	Void,
 	Bool,
 	Int,

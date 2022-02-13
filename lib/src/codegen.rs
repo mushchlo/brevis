@@ -503,7 +503,7 @@ fn type_hash(t: Type) -> String {
 				s.iter()
 					.map(|agg| type_hash(agg.r#type.clone()) + "_" + &agg.name)
 					.reduce(|acc, next| acc + "_" + &next)
-					.unwrap()
+					.unwrap_or_else(String::new)
 			),
 		TypeConstructor(tc) =>
 			format!("tc_{}__{}__",

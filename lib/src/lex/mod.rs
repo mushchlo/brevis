@@ -25,25 +25,24 @@ pub fn lex(s: &str) -> TokenStream {
 	let mut src = CharsPos::new(s);
 	let mut tokstrm: VecDeque<Token> = VecDeque::new();
 
-	while let Some((_, c)) = src.skip_whitespace().peek() {
-		if *c == '«' {
-			src.skip_comment()
+	while let Some((_, c)) = src.skip_whitespace().next() {
+		if c == '/' && *src.peek().unwrap().1 == '*' {
+			src.skip_char('*');
+			src.skip_multiline_comment();
 		} else {
 			tokstrm.push_back(match c {
 				'"' => src.get_strlit(),
-				'0'..='9' => src.get_numlit(),
+				'0'..='9' => src.get_numlit(c),
 				_ => {
-					if is_op_char(*c) {
-						src.get_op(
-							tokstrm.back().map(|tok| &tok.val)
-						)
-					} else if is_punc_char(*c) {
-						src.make_token(|s| TokenValue::Punc(s.next().unwrap().1))
+					if is_op_char(c) {
+						src.get_op(c, tokstrm.back().map(|tok| &tok.val))
+					} else if is_punc_char(c) {
+						src.make_token(|_| TokenValue::Punc(c))
 					} else {
-						src.get_id()
+						src.get_id(c)
 					}
 				}
-			})
+			});
 		}
 	}
 
@@ -64,11 +63,14 @@ impl CharsPos<'_> {
 		panic!("expected `{}` character at {}", expected, self.pos)
 	}
 
-	fn read_while<F>(&mut self, mut cond: F) -> String
+	fn read_while<F>(&mut self, first_char: Option<char>, mut cond: F) -> String
 	where
 		F: FnMut(&char) -> bool, // sometimes callers need to retain state between closure calls
 	{
-		let mut acc = String::new();
+		let mut acc = match first_char {
+			Some(c) => String::from(c),
+			None => String::new()
+		};
 		loop {
 			match self.peek() {
 				Some((_, c)) if cond(c) => {
@@ -89,7 +91,7 @@ impl CharsPos<'_> {
 		F: FnMut(&char) -> bool,
 	{
 		let begin = self.pos;
-		self.read_while(cond).parse::<T>().unwrap_or_else(|_| {
+		self.read_while(None, cond).parse::<T>().unwrap_or_else(|_| {
 			panic!(
 				":{}:{} malformed {} literal",
 				begin.row,
@@ -114,11 +116,11 @@ impl CharsPos<'_> {
 		strlit
 	}
 
-	fn get_numlit(&mut self) -> Token {
+	fn get_numlit(&mut self, first_digit: char) -> Token {
 		let mut is_flt = false;
 		let mut last_e = false;
 		let startpos = self.pos;
-		let to_num_lit = self.read_while(|&ch| {
+		let to_num_lit = self.read_while(Some(first_digit), |&ch| {
 			let cont = if is_flt_char(ch) || (last_e && ch == '-') {
 				is_flt = true;
 				true
@@ -154,15 +156,21 @@ impl CharsPos<'_> {
 		}
 	}
 
-	fn skip_comment(&mut self) {
+	fn skip_multiline_comment(&mut self) {
 		let mut comment_depth = 1;
-		while comment_depth != 0 {
+		while comment_depth > 0 {
 			match self.next() {
 				None => panic!("unterminated comment"),
 				Some((_, c)) => {
 					comment_depth += match c {
-						'«' => 1,
-						'»' => -1,
+						'/' if *self.peek().unwrap().1 == '*' => {
+							self.skip_char('*');
+							1
+						},
+						'*' if *self.peek().unwrap().1 == '/' => {
+							self.skip_char('/');
+							-1
+						},
 						_ => 0,
 					}
 				}
@@ -180,12 +188,16 @@ impl CharsPos<'_> {
 		self
 	}
 
-	fn get_op(&mut self, context: Option<&TokenValue>) -> Token {
-		self.make_token(|s| map_op(s.read_while(|&c| is_op_char(c)), context))
+	fn get_op(&mut self, first_char: char, context: Option<&TokenValue>) -> Token {
+		self.make_token(|s|
+			map_op(s.read_while(Some(first_char), |&c| is_op_char(c)), context)
+		)
 	}
 
-	fn get_id(&mut self) -> Token {
-		self.make_token(|s| map_keyword(s.read_while(|&c| !is_special_char(c))))
+	fn get_id(&mut self, first_char: char) -> Token {
+		self.make_token(|s|
+			map_keyword(s.read_while(Some(first_char), |&c| !is_special_char(c)))
+		)
 	}
 
 	fn make_token<F>(&mut self, mut f: F) -> Token
