@@ -341,9 +341,9 @@ impl Compilation {
 					);
 				}
 
-				TypeConstructor(tc) if tc.name == "Function" => {
+				Func(args) => {
 					return self.compile_fn_type(
-						tc.args,
+						args,
 						if fns_as_ptrs && !name.is_empty() {
 							format!("(*{})", name)
 						} else {
@@ -371,7 +371,7 @@ impl Compilation {
 					&self.type_map[&Struct(s)]
 				}
 
-				_ => panic!("aaaa i cant make type {:#?}", t)
+				TypeVar(_) => panic!("aaaa i cant make type {:#?}", t)
 			}.to_string(),
 
 			if !name.is_empty() {
@@ -409,12 +409,12 @@ impl Compilation {
 				.reduce(|acc, next| acc + ", " + &next)
 				.unwrap();
 		match ret_t {
-			TypeConstructor(tc) if &tc.name == "Function" => {
+			Func(args_t) => {
 				let compiled = format!("{}({})",
 					acc,
 					compiled_args
 				);
-				self.compile_fn_type(tc.args, compiled, vec![])
+				self.compile_fn_type(args_t, compiled, vec![])
 			}
 			_ => format!("{} {}({})",
 				self.compile_type_name(ret_t, "".to_string(), true),
@@ -505,10 +505,9 @@ fn type_hash(t: Type) -> String {
 					.reduce(|acc, next| acc + "_" + &next)
 					.unwrap_or_else(String::new)
 			),
-		TypeConstructor(tc) =>
-			format!("tc_{}__{}__",
-				tc.name,
-				tc.args.iter()
+		Func(args_t) =>
+			format!("fn__{}__",
+				args_t.iter()
 					.map(|t| type_hash(t.clone()))
 					.reduce(|acc, next| acc + "_" + &next)
 					.unwrap()

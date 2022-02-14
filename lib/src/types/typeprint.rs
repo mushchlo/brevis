@@ -22,8 +22,7 @@ pub fn name_of(t: &Type) -> &str {
 		TypeVar(_) => " generic value",
 		Struct(_) => " structure",
 		Pointer(_) => " pointer",
-		TypeConstructor(tc) if &tc.name == "Function" => " function",
-		TypeConstructor(_) => panic!(),
+		Func(_) => " function",
 	}
 }
 
@@ -60,11 +59,11 @@ fn display_type(t: &Type, generic_names: &mut HashMap<u16, char>) -> String {
 					)
 					.unwrap()
 			),
-		TypeConstructor(tc) if &tc.name == "Function" => {
-			let mut args_t = tc.args.clone();
-			let ret_t = args_t.pop().unwrap();
+		Func(args_t) => {
+			let mut cloned_args = args_t.clone();
+			let ret_t = cloned_args.pop().unwrap();
 			format!("fn ({}) -> {}",
-				args_t.iter()
+				cloned_args.iter()
 					.map(|arg_t| display_type(arg_t, generic_names))
 					.reduce(|acc, next|
 						acc + ", " + &next
@@ -73,6 +72,5 @@ fn display_type(t: &Type, generic_names: &mut HashMap<u16, char>) -> String {
 				display_type(&ret_t, generic_names)
 			)
 		}
-		TypeConstructor(tc) => panic!("Can't pretty-print this type of type constructor: {}", tc.name)
 	}
 }

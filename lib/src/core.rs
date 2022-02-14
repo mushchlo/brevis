@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use crate::parse::ast::{
 	Type,
 	Type::*,
-	TConstructor
 };
 use lazy_static::lazy_static;
 use parse::get_type_var;
@@ -29,10 +28,7 @@ lazy_static! {
 		].iter().map(|(name, args)|
 			(
 				name.to_string(),
-				Type::TypeConstructor(TConstructor {
-					name: "Function".to_string(),
-					args: args.clone(),
-				})
+				Type::Func(args.clone())
 			)
 		).collect();
 }

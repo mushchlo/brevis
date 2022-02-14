@@ -19,7 +19,6 @@ use crate::{
 		Unary,
 		Variable,
 		Parameter,
-		TConstructor,
 		GenericType,
 		Type,
 		Type::*,
@@ -332,16 +331,14 @@ impl Inference {
 				let lambda_substitutions = self.solve_constraints(constraints);
 				let new_return_t = substitute(&lambda_substitutions, new_body.r#type.clone());
 
-				let new_fn_t = TypeConstructor(TConstructor {
-					name: "Function".to_string(),
-					args:
-						l.args.iter()
-							.map(|v|
-								substitute(&lambda_substitutions, v.r#type.clone())
-							)
-							.chain(iter::once(new_return_t))
-							.collect(),
-			 	});
+				let new_fn_t = Func(
+					l.args.iter()
+						.map(|v|
+							substitute(&lambda_substitutions, v.r#type.clone())
+						)
+						.chain(iter::once(new_return_t))
+						.collect(),
+			 	);
 				let new_args = l.args.into_iter()
 					.map(|a|
 						Parameter {
@@ -378,11 +375,11 @@ impl Inference {
 					c.args.iter()
 						.map(|_| get_type_var())
 						.collect::<Vec<_>>();
-				let new_fn_t = TypeConstructor(
-					TConstructor {
-						name: "Function".to_string(),
-						args: args_t.clone().into_iter().chain(iter::once(expr.r#type.clone())).collect(),
-					}
+				let new_fn_t = Func(
+					args_t.clone()
+						.into_iter()
+						.chain(iter::once(expr.r#type.clone()))
+						.collect()
 				);
 
 				let new_fn = self.infer(
@@ -483,15 +480,11 @@ pub fn instantiate(
 			t,
 		Pointer(box r) =>
 			Pointer(box instantiate(substitutions, instantiation, r)),
-		TypeConstructor(tc) =>
-			TypeConstructor(
-				TConstructor {
-					name: tc.name,
-					args: tc.args
-						.into_iter()
-						.map(|t| instantiate(substitutions, instantiation, t))
-						.collect(),
-				}
+		Func(args_t) =>
+			Func(
+				args_t.into_iter()
+					.map(|t| instantiate(substitutions, instantiation, t))
+					.collect()
 			),
 		Struct(s) =>
 			Struct(
@@ -525,13 +518,11 @@ fn substitute(substitutions: &HashMap<u16, Type>, t: Type) -> Type {
 			),
 
 		TypeVar(_) => t,
-		TypeConstructor(tc) => TypeConstructor(TConstructor {
-			name: tc.name,
-			args: tc.args
-				.iter()
+		Func(args_t) => Func(
+			args_t.iter()
 				.map(|t1| substitute(substitutions, t1.clone()))
 				.collect::<Vec<Type>>(),
-		}),
+		),
 		Struct(s) => Struct(
 			s.iter().map(|a|
 				AggregateType {
@@ -553,21 +544,9 @@ fn unify(
 ) {
 	// TODO: Remove unecessary up-front clone
 	match (t1.clone(), t2.clone()) {
-		(
-			TypeConstructor(TConstructor {
-				name: v1,
-				args: args1,
-			}),
-			TypeConstructor(TConstructor {
-				name: v2,
-				args: args2,
-			}),
-		) => {
-			if v1 != v2 {
-				panic!("Type constructor {:#?} is not the same as type constructor {:#?}, but was attempted to be unified with it", v1, v2);
-			}
+		(Func(args1), Func(args2)) => {
 			if args1.len() != args2.len() {
-				panic!("type constructors with unequal lengths are attempting to be unified, {:#?} and {:#?}", t1, t2);
+				panic!("functions with unequal lengths are attempting to be unified, {:#?} and {:#?}", t1, t2);
 			}
 			for (t3, t4) in args1.into_iter().zip(args2.into_iter()) {
 				unify(substitutions, errors, t3, t4, origin);
@@ -638,8 +617,9 @@ fn occurs_in(substitutions: &HashMap<u16, Type>, index: u16, t: Type) -> bool {
 
 		Struct(s) => s.into_iter().any(|a| occurs_in(substitutions, index, a.r#type)),
 
-		TypeConstructor(TConstructor { args: a, .. }) => {
-			a.into_iter().any(|t1| occurs_in(substitutions, index, t1))
+		Func(args_t) => {
+			args_t.into_iter()
+				.any(|t1| occurs_in(substitutions, index, t1))
 		}
 	}
 }
@@ -679,8 +659,8 @@ pub fn free_in_type(substitutions: &HashMap<u16, Type>, t: Type) -> HashSet<u16>
 			HashSet::from([i]),
 		Pointer(box r) =>
 			free_in_type(substitutions, r),
-		TypeConstructor(tc) =>
-			tc.args.iter()
+		Func(args_t) =>
+			args_t.iter()
 				.map(|arg| free_in_type(substitutions, arg.clone()))
 				.reduce(|acc, next|
 					acc.union(&next).copied().collect()

@@ -594,12 +594,9 @@ impl TokenStream {
 						if return_types.is_empty() {
 							return_types.push_front(Void);
 						}
-						Type::TypeConstructor(TConstructor {
-							name: "Function".to_string(),
-							args: {
-								arg_types.append(&mut return_types);
-								Vec::from(arg_types)
-							},
+						Type::Func({
+							arg_types.append(&mut return_types);
+							Vec::from(arg_types)
 						})
 					}
 

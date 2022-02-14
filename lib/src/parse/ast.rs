@@ -126,7 +126,8 @@ pub enum Type {
 	// Union(Vec<Aggregate>),
 	Struct(Vec<AggregateType>),
 	Pointer(Box<Type>),
-	TypeConstructor(TConstructor),
+// The argument types, ending with the return type
+	Func(Vec<Type>),
 
 	TypeVar(u16),
 }
@@ -135,12 +136,6 @@ pub enum Type {
 pub struct AggregateType {
 	pub name: String,
 	pub r#type: Type,
-}
-
-#[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash, PartialOrd, Ord)]
-pub struct TConstructor {
-	pub name: String,
-	pub args: Vec<Type>,
 }
 
 
