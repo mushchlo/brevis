@@ -20,6 +20,7 @@ use crate::{
 	types::{
 		annotate_helper,
 	},
+	util::Env,
 };
 
 
@@ -33,17 +34,6 @@ static MONOMORPHIZE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 // functions in context, and modify calls to refer to those monomorphized functions by their proper
 // names.
 impl Expr {
-	fn env_find<V: Clone + std::fmt::Debug>(env: &[HashMap<String, V>], fn_name: &str) -> V {
-		for map in env {
-			for (name, v) in map.iter() {
-				if name == fn_name {
-					return v.clone();
-				}
-			}
-		}
-		panic!("{} was not found in env {:#?}!", fn_name, env);
-	}
-
 	pub fn monomorphize(
 		&mut self,
 		fns: &mut Vec<HashMap<String, (Expr, Vec<TypeVarId>)>>,
@@ -60,7 +50,8 @@ impl Expr {
 			VarNode(ref mut v) => {
 				if !v.generics.is_empty() && !core_vals.contains_key(&v.name) {
 					let instantiation =
-						Expr::env_find(fns, &v.name).1
+						fns.find(&v.name).unwrap().1
+							.clone()
 							.into_iter()
 							.zip(v.generics.clone().into_iter())
 							.collect::<HashMap<_, _>>();

@@ -1,7 +1,7 @@
 pub mod ast;
 
 use crate::{
-	util::find_in_env,
+	util::Env,
 	parse::ast::{
 		*,
 		Type::*,
@@ -52,20 +52,14 @@ lazy_static! {
 
 macro_rules! var_types {
 	() => {
-		VAR_TYPES.lock().unwrap()
+		*VAR_TYPES.lock().unwrap()
 	}
 }
 
-fn insert_in(key: String, value: Type, dict: &mut Vec<HashMap<String, Type>>) {
-	dict.last_mut().unwrap().insert(key, value);
-}
-
-fn new_stack_in(dict: &mut Vec<HashMap<String, Type>>) {
-	dict.push(HashMap::new());
-}
-
-fn pop_stack_in(dict: &mut Vec<HashMap<String, Type>>) {
-	dict.pop();
+macro_rules! type_dict {
+	() => {
+		*TYPE_DICT.lock().unwrap()
+	}
 }
 
 impl TokenStream {
@@ -94,12 +88,12 @@ impl TokenStream {
 	}
 
 	pub fn parse(&mut self) -> Expr {
-		*var_types!() =
+		var_types!() =
 			vec![
 				core_vals.clone(),
 				HashMap::new()
 			];
-		*TYPE_DICT.lock().unwrap() = vec![ HashMap::new() ];
+		type_dict!() = vec![ HashMap::new() ];
 		let mut parsed = VecDeque::<Expr>::new();
 
 		let mut end_loc = 0;
@@ -125,10 +119,10 @@ impl TokenStream {
 	}
 
 	fn parse_expr(&mut self) -> Expr {
-		new_stack_in(&mut *TYPE_DICT.lock().unwrap());
+		type_dict!().new_stack();
 		let expr = self.parse_atom();
 		let ret = self.maybe_call(|s| s.maybe_binary(expr.clone(), -1));
-		pop_stack_in(&mut *TYPE_DICT.lock().unwrap());
+		type_dict!().pop_stack();
 		ret
 	}
 
@@ -282,7 +276,7 @@ impl TokenStream {
 							}
 						),
 						loc,
-						r#type: find_in_env(&*var_types!(), &id).unwrap().clone()
+						r#type: var_types!().find(&id).unwrap().clone()
 					}
 				}
 				UnaryOp(u) => s.parse_unary(u),
@@ -372,7 +366,7 @@ impl TokenStream {
 			loc: name_loc,
 		}) = self.next()
 		{
-			if find_in_env(&*var_types!(), &id).is_some() {
+			if var_types!().find(&id).is_some() {
 				// making sure declared var does not already exist
 				panic!(
 					"variable {} was already declared, but was declared again at {}",
@@ -397,7 +391,7 @@ impl TokenStream {
 				type_loc,
 			};
 
-			insert_in(var.name.clone(), var.r#type.clone(), &mut *var_types!());
+			var_types!().insert_in_env(var.name.clone(), var.r#type.clone());
 			var
 		} else {
 			panic!("expected identifier for declared variable, found EOF")
@@ -410,7 +404,7 @@ impl TokenStream {
 			loc
 		}) = self.next()
 		{
-			if find_in_env(&*var_types!(), &id).is_some() {
+			if var_types!().find(&id).is_some() {
 				return id;
 			} else {
 				panic!("identifier {} at {} was used before declaration", id, loc.start);
@@ -446,11 +440,11 @@ impl TokenStream {
 	}
 
 	fn parse_block(&mut self) -> Expr {
-		new_stack_in(&mut *var_types!());
+		var_types!().new_stack();
 		let (parsed, block_loc) = self.delimited(Punc('{'), Punc('}'), Punc(';'), |s|
 			s.parse_node()
 		);
-		pop_stack_in(&mut *var_types!());
+		var_types!().pop_stack();
 
 		match parsed.len() {
 			0 => panic!("empty block :/"),
@@ -493,7 +487,7 @@ impl TokenStream {
 	fn parse_lambda(&mut self) -> Expr {
 		let begin_loc = self.peek().unwrap().loc;
 		self.skip_token(KeyWord(KeyWord::λ));
-		new_stack_in(&mut *var_types!());
+		var_types!().new_stack();
 
 		let (args, _) = self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var());
 		let return_type =
@@ -518,7 +512,7 @@ impl TokenStream {
 			body: Box::new(self.parse_expr()),
 		};
 
-		pop_stack_in(&mut *var_types!());
+		var_types!().pop_stack();
 
 		Expr {
 			loc: begin_loc.join(lambda_val.body.loc),
@@ -636,15 +630,15 @@ impl TokenStream {
 						None =>
 							panic!("expected an identifier for a generic type, found EOF")
 					};
-					let type_var =
-						find_in_env(&*TYPE_DICT.lock().unwrap(), &generic_name)
-							.cloned()
-							.unwrap_or_else(get_type_var);
-					insert_in(generic_name, type_var.clone(), &mut *TYPE_DICT.lock().unwrap());
+					let type_var = type_dict!()
+						.find(&generic_name)
+						.cloned()
+						.unwrap_or_else(get_type_var);
+					type_dict!().insert_in_env(generic_name, type_var.clone());
 					type_var
 				}
 				Ident(id) =>
-					match TYPE_DICT.lock().unwrap().last().unwrap().get(&id) {
+					match type_dict!().last().unwrap().get(&id) {
 						Some(t) => t.clone(),
 						_ => panic!("identifier {} does not represent a type, but was used in place of one", id),
 					},

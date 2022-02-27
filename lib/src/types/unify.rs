@@ -37,6 +37,7 @@ use crate::{
 	lex::cradle::SourceLoc,
 	error::ErrorMessage,
 	types::typeprint::name_of,
+	util::Env,
 };
 
 
@@ -66,20 +67,6 @@ impl Inference {
 			substitutions: HashMap::new(),
 			errors: HashSet::new(),
 		}
-	}
-
-	fn env_insert(&mut self, key: String, value: Type) {
-		self.env.last_mut().unwrap().insert(key, value);
-	}
-
-	fn env_find(&self, key: String) -> Option<Type> {
-		for map in self.env.clone() {
-			if map.contains_key(&key) {
-				return map.get(&key).cloned();
-			}
-		}
-
-		None
 	}
 
 	fn infer(&mut self, expr: Expr, constraints: &mut Vec<Constraint>) -> Expr {
@@ -184,7 +171,7 @@ impl Inference {
 			}
 
 			ExprVal::BlockNode(b) => {
-				self.env.push(HashMap::new());
+				self.env.new_stack();
 
 				let mut head = b;
 				let tail = head.pop_back().unwrap();
@@ -209,7 +196,7 @@ impl Inference {
 			// The declared variable needs to be placed prematurely in the environment, in case
 			// the definition is a recursive function. After inferring the definition, the declared
 			// variable is reinserted into the environment, with its inferred type.
-				self.env_insert(l.var.name.clone(), l.var.r#type.clone());
+				self.env.insert_in_env(l.var.name.clone(), l.var.r#type.clone());
 				l.def =
 					l.def.clone().map(|def| {
 						let mut new_def = self.infer(*def, constraints);
@@ -220,7 +207,7 @@ impl Inference {
 						new_def.r#type = generalize(new_def.r#type.clone());
 
 						l.var.r#type = new_def.r#type.clone();
-						self.env_insert(l.var.name.clone(), l.var.r#type.clone());
+						self.env.insert_in_env(l.var.name.clone(), l.var.r#type.clone());
 
 						box new_def
 					});
@@ -271,14 +258,15 @@ impl Inference {
 			}
 
 			ExprVal::VarNode(v) => {
-				let var_t = self.env_find(v.name.clone())
+				let var_t = self.env.find(&v.name)
+					.cloned()
 					.unwrap_or_else(||
 						panic!("unable to find variable {:#?} in the environment when inferring types, env looks like {:#?}",
 							v,
 							self.env.to_vec()
 						)
 					);
-				if let Forall(generics, t) = var_t {
+				if let Forall(generics, box t) = var_t {
 					let new_generics = generics.iter().map(|_| get_type_var()).collect::<Vec<_>>();
 					let instantiation =
 						generics.into_iter()
@@ -304,7 +292,7 @@ impl Inference {
 						r#type: instantiate(
 							&self.substitutions,
 							&instantiation,
-							*t
+							t
 						),
 					};
 					constraints.push(mk_eq(&new_var, &expr));
@@ -324,9 +312,9 @@ impl Inference {
 			}
 
 			ExprVal::LambdaNode(l) => {
-				self.env.push(HashMap::new());
+				self.env.new_stack();
 				for arg in l.args.iter() {
-					self.env_insert(arg.name.clone(), arg.r#type.clone());
+					self.env.insert_in_env(arg.name.clone(), arg.r#type.clone());
 				}
 
 				let new_body = self.infer(Expr {
