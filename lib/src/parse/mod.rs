@@ -1,10 +1,10 @@
 pub mod ast;
 
 use crate::{
+	util::find_in_env,
 	parse::ast::{
 		*,
 		Type::*,
-		AST::*,
 		ExprVal::*,
 		Literal::*
 	},
@@ -27,12 +27,12 @@ use crate::{
 };
 
 use lazy_static::lazy_static;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, HashSet};
 use std::sync::{
 	Arc,
 	Mutex,
 	atomic::{
-		AtomicU16,
+		AtomicUsize,
 		Ordering,
 	},
 };
@@ -40,8 +40,8 @@ use std::sync::{
 lazy_static! {
 	static ref TYPE_DICT: Mutex<Vec<HashMap<String, Type>>> =
 		Mutex::new(vec![HashMap::new()]);
-	static ref TYPE_VAR_COUNTER: Arc<AtomicU16> =
-		Arc::new(AtomicU16::new(0));
+	static ref TYPE_VAR_COUNTER: Arc<AtomicUsize> =
+		Arc::new(AtomicUsize::new(0));
 
 	static ref VAR_TYPES: Mutex<Vec<HashMap<String, Type>>> =
 		Mutex::new(vec![
@@ -50,14 +50,10 @@ lazy_static! {
 		]);
 }
 
-fn find_in(id: &str, dict: &[HashMap<String, Type>]) -> Option<Type> {
-	for map in dict {
-		if map.contains_key(id) {
-			return map.get(id).cloned();
-		}
+macro_rules! var_types {
+	() => {
+		VAR_TYPES.lock().unwrap()
 	}
-
-	None
 }
 
 fn insert_in(key: String, value: Type, dict: &mut Vec<HashMap<String, Type>>) {
@@ -70,15 +66,6 @@ fn new_stack_in(dict: &mut Vec<HashMap<String, Type>>) {
 
 fn pop_stack_in(dict: &mut Vec<HashMap<String, Type>>) {
 	dict.pop();
-}
-
-impl AST {
-	fn expect_expr(self) -> Expr {
-		match self {
-			AST::ExprNode(e) => e,
-			_ => panic!("an expression was expected, but a statement was found instead"),
-		}
-	}
 }
 
 impl TokenStream {
@@ -94,8 +81,8 @@ impl TokenStream {
 		match self.peek() {
 			None => panic!("expected token {:?}, found EOF", expected),
 			Some(t) if t.val != expected => panic!(
-				"expected token {:?} at {:?}, found token {:?}",
-				expected, t.loc, t.val
+				"expected token {:?} at {}, found token {:?}",
+				expected, t.loc.start, t.val
 			),
 			_ => {}
 		}
@@ -107,13 +94,13 @@ impl TokenStream {
 	}
 
 	pub fn parse(&mut self) -> Expr {
-		*VAR_TYPES.lock().unwrap() =
+		*var_types!() =
 			vec![
 				core_vals.clone(),
 				HashMap::new()
 			];
 		*TYPE_DICT.lock().unwrap() = vec![ HashMap::new() ];
-		let mut parsed = VecDeque::<AST>::new();
+		let mut parsed = VecDeque::<Expr>::new();
 
 		let mut end_loc = 0;
 		while self.peek().is_some() {
@@ -129,36 +116,33 @@ impl TokenStream {
 		}
 	}
 
-	fn parse_node(&mut self) -> AST {
+	fn parse_node(&mut self) -> Expr {
 		let atom = self.parse_atom();
-		self.maybe_call(|s| match atom.clone() {
-			ExprNode(e) => ExprNode(s.maybe_binary(e, -1)),
-			_ => atom.clone(),
+		self.maybe_call(|s| match &atom.val {
+			LetNode(_) => atom.clone(),
+			_ => s.maybe_binary(atom.clone(), -1),
 		})
 	}
 
 	fn parse_expr(&mut self) -> Expr {
 		new_stack_in(&mut *TYPE_DICT.lock().unwrap());
-		let expr = self.parse_atom().expect_expr();
-		let ret = self.maybe_call(|s| ExprNode(s.maybe_binary(expr.clone(), -1)))
-			.expect_expr();
+		let expr = self.parse_atom();
+		let ret = self.maybe_call(|s| s.maybe_binary(expr.clone(), -1));
 		pop_stack_in(&mut *TYPE_DICT.lock().unwrap());
 		ret
 	}
 
-	fn maybe_call<F>(&mut self, mut get_ast: F) -> AST
+	fn maybe_call<F>(&mut self, mut get_expr: F) -> Expr
 	where
-		F: FnMut(&mut TokenStream) -> AST,
+		F: FnMut(&mut TokenStream) -> Expr,
 	{
-		let a = get_ast(self);
+		let e = get_expr(self);
 
-		if let ExprNode(e) = a.clone() {
-			if let Some(Token { val: Punc('('), .. }) = self.peek() {
-				return self.parse_call(e);
-			}
+		if let Some(Token { val: Punc('('), .. }) = self.peek() {
+			self.parse_call(e)
+		} else {
+			e
 		}
-
-		a
 	}
 
 	fn maybe_binary(&mut self, left_expr: Expr, prev_prec: i8) -> Expr {
@@ -167,7 +151,7 @@ impl TokenStream {
 				BinaryOp(InfixFn) => {
 					self.skip_token(BinaryOp(InfixFn));
 				// TODO: MASSIVE BUG HERE. INFIX FNs CANNOT CONTAIN BINARY OP??? AWFUL IMPL
-					let e = self.maybe_call(|s| s.parse_atom()).expect_expr();
+					let e = self.maybe_call(|s| s.parse_atom());
 					let f = new_expr(e.loc, e.val);
 					self.skip_token(BinaryOp(InfixFn));
 					let right_expr = self.parse_expr();
@@ -195,7 +179,7 @@ impl TokenStream {
 						let right_expr =
 							if curr_op == OpID::Member {
 								self.maybe_call(|s|
-									ExprNode(if let Some(operand_tok) = s.peek() {
+									if let Some(operand_tok) = s.peek() {
 										match &operand_tok.val {
 											Ident(member) => {
 												s.skip_token(Ident(member.clone()));
@@ -210,14 +194,14 @@ impl TokenStream {
 												)
 											}
 
-											non_id => panic!("At {:?}, the dot operator was used with a non-identifier RHS argument {:#?}.", op_tok.loc, non_id)
+											non_id => panic!("At {}, the dot operator was used with a non-identifier RHS argument {:#?}.", op_tok.loc.start, non_id)
 										}
 									} else {
 										panic!("Expected a RHS argument for the dot operator, found EOF");
-									})
-								).expect_expr()
+									}
+								)
 							} else {
-								let tmp = self.parse_atom().expect_expr();
+								let tmp = self.parse_atom();
 								self.maybe_binary(tmp, curr_prec)
 							};
 
@@ -259,7 +243,7 @@ impl TokenStream {
 		left_expr
 	}
 
-	fn parse_atom(&mut self) -> AST {
+	fn parse_atom(&mut self) -> Expr {
 		self.maybe_call(|s| {
 			let loc = s.peek().unwrap().loc;
 			match s.peek().unwrap().val {
@@ -268,14 +252,14 @@ impl TokenStream {
 						s.next();
 						let expr = s.parse_expr();
 						s.skip_token(Punc(')'));
-						ExprNode(expr)
+						expr
 					}
 					'{' => s.parse_block(),
 					'[' => s.parse_struct_literal(),
 					_ => panic!(
-						"unexpected punctuation {:?} at {:?}",
+						"unexpected punctuation {:?} at {}",
 						p,
-						s.peek().unwrap().loc
+						s.peek().unwrap().loc.start
 					),
 				},
 				KeyWord(kw) => match kw {
@@ -286,11 +270,11 @@ impl TokenStream {
 				},
 				Literal(l) => {
 					s.skip_token(Literal(l.clone()));
-					new_expr_ast(loc, LiteralNode(AtomicLiteral(l)))
+					new_expr(loc, LiteralNode(AtomicLiteral(l)))
 				}
 				Ident(_) => {
 					let id = s.parse_id();
-					ExprNode(Expr {
+					Expr {
 						val: VarNode(
 							Variable {
 								name: id.clone(),
@@ -298,8 +282,8 @@ impl TokenStream {
 							}
 						),
 						loc,
-						r#type: find_in(&id, &*VAR_TYPES.lock().unwrap()).unwrap()
-					})
+						r#type: find_in_env(&*var_types!(), &id).unwrap().clone()
+					}
 				}
 				UnaryOp(u) => s.parse_unary(u),
 				_ => panic!("unexpected token {:?}", s.peek().unwrap()),
@@ -307,38 +291,49 @@ impl TokenStream {
 		})
 	}
 
-	fn parse_let(&mut self) -> AST {
+	fn parse_let(&mut self) -> Expr {
+		let start_loc = self.peek().unwrap().loc;
 		self.skip_token(KeyWord(KeyWord::Let));
 		let parsed_var = self.declare_var();
-		let parsed_def = if let Some(Token {
+
+		let (parsed_def, end_loc) = if let Some(Token {
 			val: AssignOp(Eq),
 			..
 		}) = self.peek()
 		{
 			self.skip_token(AssignOp(Eq));
-			Some(Box::new(self.parse_expr()))
+			let def = self.parse_expr();
+			let def_loc = def.loc;
+			(Some(box def), def_loc)
 		} else {
-			None
+			(None, self.peek().unwrap().loc)
 		};
 
-		LetNode(Let {
-			var: parsed_var,
-			def: parsed_def,
-		})
+		Expr {
+			val:
+				LetNode(Let {
+					var: parsed_var,
+					def: parsed_def,
+				}),
+			r#type: Type::Void,
+			loc: start_loc.join(end_loc),
+		}
 	}
 
+	// Returns the parsed structure, along with the location it was in.
 	fn delimited<F, R>(
 		&mut self,
 		begin: TokenValue,
 		end: TokenValue,
 		delim: TokenValue,
 		mut parser: F,
-	) -> VecDeque<R>
+	) -> (VecDeque<R>, SourceLoc)
 	where
 		F: FnMut(&mut TokenStream) -> R,
 	{
 		let mut parsed = VecDeque::<R>::new();
 		let mut first = true;
+		let mut loc = SourceLoc::new(self.peek().unwrap().loc.start, self.peek().unwrap().loc.end);
 
 		self.skip_token(begin);
 		while let Some(mut tok) = self.peek() {
@@ -358,22 +353,30 @@ impl TokenStream {
 
 			parsed.push_back(parser(self));
 		}
+		loc.end = self.peek().unwrap().loc.end;
 		self.skip_token(end);
 
-		parsed
+		(parsed, loc)
 	}
 
 	fn declare_var(&mut self) -> Parameter {
+		let mutable = match self.peek() {
+			Some(t) if t.val == KeyWord(KeyWord::Mut) => {
+				self.skip_token(KeyWord(KeyWord::Mut));
+				true
+			}
+			_ => false,
+		};
 		if let Some(Token {
 			val: Ident(id),
 			loc: name_loc,
 		}) = self.next()
 		{
-			if find_in(&id, &*VAR_TYPES.lock().unwrap()).is_some() {
+			if find_in_env(&*var_types!(), &id).is_some() {
 				// making sure declared var does not already exist
 				panic!(
-					"variable {} was already declared, but was declared again at {:?}",
-					id, name_loc
+					"variable {} was already declared, but was declared again at {}",
+					id, name_loc.start
 				);
 			}
 			let (var_type, type_loc) = match self.peek() {
@@ -388,12 +391,13 @@ impl TokenStream {
 			};
 			let var = Parameter {
 				name: id,
+				mutable,
 				r#type: var_type,
 				name_loc,
 				type_loc,
 			};
 
-			insert_in(var.name.clone(), var.r#type.clone(), &mut *VAR_TYPES.lock().unwrap());
+			insert_in(var.name.clone(), var.r#type.clone(), &mut *var_types!());
 			var
 		} else {
 			panic!("expected identifier for declared variable, found EOF")
@@ -406,19 +410,19 @@ impl TokenStream {
 			loc
 		}) = self.next()
 		{
-			if find_in(&id, &*VAR_TYPES.lock().unwrap()).is_some() {
+			if find_in_env(&*var_types!(), &id).is_some() {
 				return id;
 			} else {
-				panic!("identifier {} at {:?} was used before declaration", id, loc);
+				panic!("identifier {} at {} was used before declaration", id, loc.start);
 			}
 		}
 		panic!(
-			"expected identifier of a declared variable at {:?}",
-			self.peek().unwrap().loc
+			"expected identifier of a declared variable at {}",
+			self.peek().unwrap().loc.start
 		);
 	}
 
-	fn parse_if(&mut self) -> AST {
+	fn parse_if(&mut self) -> Expr {
 		let begin_pos = self.peek().unwrap().loc.start;
 		self.skip_token(KeyWord(KeyWord::If));
 		let mut parsed = IfElse {
@@ -438,45 +442,34 @@ impl TokenStream {
 			parsed.r#else = Some(Box::new(self.parse_expr()));
 		}
 
-		new_expr_ast(SourceLoc::new(begin_pos, end_pos), IfNode(parsed))
+		new_expr(SourceLoc::new(begin_pos, end_pos), IfNode(parsed))
 	}
 
-	fn parse_block(&mut self) -> AST {
-		new_stack_in(&mut *VAR_TYPES.lock().unwrap());
-		let begin_pos = self.peek().unwrap().loc.start;
-		let mut end_pos = self.peek().unwrap().loc.end;
-		let parsed = self.delimited(Punc('{'), Punc('}'), Punc(';'), |s| {
-			end_pos = s.peek().unwrap().loc.end;
+	fn parse_block(&mut self) -> Expr {
+		new_stack_in(&mut *var_types!());
+		let (parsed, block_loc) = self.delimited(Punc('{'), Punc('}'), Punc(';'), |s|
 			s.parse_node()
-		});
-		pop_stack_in(&mut *VAR_TYPES.lock().unwrap());
+		);
+		pop_stack_in(&mut *var_types!());
 
 		match parsed.len() {
 			0 => panic!("empty block :/"),
 			1 => parsed.front().unwrap().clone(),
-			_ => new_expr_ast(
-				SourceLoc::new(begin_pos, end_pos),
+			_ => new_expr(
+				block_loc,
 				BlockNode(parsed)
 			),
 		}
 	}
 
-	fn parse_struct_literal(&mut self) -> AST {
-		let begin_pos = self.peek().unwrap().loc.start;
-		let mut end_pos = self.peek().unwrap().loc.end;
-		let struct_args = self.delimited(Punc('['), Punc(']'), Punc(','), |s| {
+	fn parse_struct_literal(&mut self) -> Expr {
+		let (struct_args, struct_loc) = self.delimited(Punc('['), Punc(']'), Punc(','), |s| {
 			let possibly_name = s.next();
 
 			let name = match possibly_name {
-				Some(Token {
-					val: Ident(name),
-					loc
-				}) => {
-					end_pos = loc.end;
-					name
-				}
+				Some(Token { val: Ident(name), .. }) => name,
 
-				Some(nonsense) => panic!("expected a name for member of structure literal at {:#?}, found {:#?}", nonsense.loc, nonsense),
+				Some(nonsense) => panic!("expected a name for member of structure literal at {}, found {:#?}", nonsense.loc.start, nonsense),
 
 				None => panic!("expected a name for member of structure literal, found EOF"),
 			};
@@ -489,44 +482,70 @@ impl TokenStream {
 			}
 		});
 
-		new_expr_ast(
-			SourceLoc::new(begin_pos, end_pos),
+		new_expr(
+			struct_loc,
 			LiteralNode(
 				StructLiteral(struct_args.into())
 			)
 		)
 	}
 
-	fn parse_lambda(&mut self) -> AST {
-		let begin_pos = self.peek().unwrap().loc;
+	fn parse_lambda(&mut self) -> Expr {
+		let begin_loc = self.peek().unwrap().loc;
 		self.skip_token(KeyWord(KeyWord::λ));
-		new_stack_in(&mut *VAR_TYPES.lock().unwrap());
+		new_stack_in(&mut *var_types!());
 
+		let (args, _) = self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var());
+		let return_type =
+			if let Some(Token {
+				val: TokenValue::KeyWord(KeyWord::Arrow),
+				..
+			}) = self.peek() {
+				self.skip_token(TokenValue::KeyWord(KeyWord::Arrow));
+				self.parse_type()
+			} else {
+				get_type_var()
+			};
+		let fn_type = Func(
+			args.iter()
+				.map(|_| get_type_var())
+				.chain(std::iter::once(return_type))
+				.collect()
+		);
 		let lambda_val = Lambda {
-			args: self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var()),
-			generics: vec![],
-			captured: vec![],
+			args,
+			captured: HashSet::new(),
 			body: Box::new(self.parse_expr()),
 		};
-		pop_stack_in(&mut *VAR_TYPES.lock().unwrap());
-		new_expr_ast(begin_pos.join(lambda_val.body.loc), LambdaNode(lambda_val))
+
+		pop_stack_in(&mut *var_types!());
+
+		Expr {
+			loc: begin_loc.join(lambda_val.body.loc),
+			val: LambdaNode(lambda_val),
+			r#type: fn_type,
+		}
 	}
 
-	fn parse_call(&mut self, f: Expr) -> AST {
-		let begin_pos = self.peek().unwrap().loc.start;
+	fn parse_call(&mut self, f: Expr) -> Expr {
+		let (args, args_loc) = self.delimited(
+			Punc('('),
+			Punc(')'),
+			Punc(','),
+			|s| s.parse_expr()
+		);
+		let loc = f.loc.join(args_loc);
 		let call_val = Call {
 			func: Box::new(f),
-			args: self.delimited(Punc('('), Punc(')'), Punc(','), |s|
-				s.parse_expr()
-			),
+			args,
 		};
-		new_expr_ast(
-			SourceLoc::new(begin_pos, self.peek().unwrap().loc.start.index),
+		new_expr(
+			loc,
 			CallNode(call_val)
 		)
 	}
 
-	fn parse_unary(&mut self, op: UOpID) -> AST {
+	fn parse_unary(&mut self, op: UOpID) -> Expr {
 		let op_loc = self.peek().unwrap().loc;
 		self.skip_token(UnaryOp(op));
 
@@ -537,33 +556,33 @@ impl TokenStream {
 				Literal(l) => {
 					self.skip_token(Literal(l.clone()));
 					if op == Neg {
-						return new_expr_ast(
+						return new_expr(
 							op_loc.join(tok.loc),
 							LiteralNode(match l {
 								IntLit(i) => AtomicLiteral(IntLit(-i)),
 								FltLit(f) => AtomicLiteral(FltLit(-f)),
 								_ => panic!(
-									"Usage of unary minus operator `-` on a non-numeric literal at {:#?}",
-									tok.loc
+									"Usage of unary minus operator `-` on a non-numeric literal at {}",
+									tok.loc.start
 								),
 							})
 						);
 					} else if op == Not {
-						return new_expr_ast(
+						return new_expr(
 							op_loc.join(tok.loc),
 							LiteralNode(match l {
 								BoolLit(b) => AtomicLiteral(BoolLit(!b)),
 								_ => panic!(
-									"Usage of not operator `!` on a non-boolean value at {:#?}",
-									tok.loc
+									"Usage of not operator `!` on a non-boolean value at {}",
+									tok.loc.start
 								),
 							})
 						);
 					}
 				}
 				_ => {
-					let expr = box self.parse_atom().expect_expr();
-					return new_expr_ast(
+					let expr = box self.parse_atom();
+					return new_expr(
 						op_loc.join(expr.loc),
 						UnaryNode(Unary {
 							op,
@@ -587,17 +606,20 @@ impl TokenStream {
 					KeyWord::Float => Type::Float,
 					KeyWord::String => Type::Str,
 					KeyWord::λ => {
-						let mut arg_types =
+						let (mut arg_types, _) =
 							self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.parse_type());
-						let mut return_types =
-							self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.parse_type());
-						if return_types.is_empty() {
-							return_types.push_front(Void);
-						}
-						Type::Func({
-							arg_types.append(&mut return_types);
-							Vec::from(arg_types)
-						})
+						let ret_type =
+							if let Some(Token {
+								val: TokenValue::KeyWord(KeyWord::Arrow),
+								..
+							}) = self.peek() {
+								self.skip_token(TokenValue::KeyWord(KeyWord::Arrow));
+								self.parse_type()
+							} else {
+								Type::Void
+							};
+						arg_types.push_back(ret_type);
+						Type::Func(Vec::from(arg_types))
 					}
 
 					_ => panic!(
@@ -610,16 +632,14 @@ impl TokenStream {
 						Some(Token { val: Ident(id), .. }) =>
 							format!("'{}", id),
 						Some(non_id) =>
-							panic!("expected an identifier for a generic type at {:#?}, found {:#?}", non_id.loc, non_id.val),
+							panic!("expected an identifier for a generic type at {}, found {:#?}", non_id.loc.start, non_id.val),
 						None =>
 							panic!("expected an identifier for a generic type, found EOF")
 					};
 					let type_var =
-						if let Some(t) = find_in(&generic_name, &*TYPE_DICT.lock().unwrap()) {
-							t
-						} else {
-							get_type_var()
-						};
+						find_in_env(&*TYPE_DICT.lock().unwrap(), &generic_name)
+							.cloned()
+							.unwrap_or_else(get_type_var);
 					insert_in(generic_name, type_var.clone(), &mut *TYPE_DICT.lock().unwrap());
 					type_var
 				}
@@ -634,14 +654,14 @@ impl TokenStream {
 						val: Punc('['),
 						loc: SourceLoc::nonexistent(),
 					}); // a dummy token to allow for the delimited() call below.
-					Type::Struct(
+					let (struct_args, _) =
 						self.delimited(Punc('['), Punc(']'), Punc(','), |s| {
 							let name =
 								match s.next() {
 									Some(Token { val: Ident(id), .. }) =>
 										id,
 									Some(not_a_name) =>
-										panic!("At {:?}, non-identifier {:?} was used as a member for a structure type", not_a_name.loc, not_a_name.val),
+										panic!("At {}, non-identifier {:?} was used as a member for a structure type", not_a_name.loc.start, not_a_name.val),
 									None =>
 										panic!("Expected an identifier as a member for a struct type, found EOF"),
 								};
@@ -651,14 +671,14 @@ impl TokenStream {
 								name,
 								r#type,
 							}
-						}).into()
-					)
+						});
+					Struct(struct_args.into())
 				}
 
 				UnaryOp(Ref) =>
 					Type::Pointer(box self.parse_type()),
 
-				non_type => panic!("expected type at {:?}, received {:?}", tok.loc, non_type),
+				non_type => panic!("expected type at {}, received {:?}", tok.loc.start, non_type),
 			},
 
 			None => panic!("expected a type, received EOF"),
@@ -688,10 +708,6 @@ fn precedence(id: OpID) -> i8 {
 
 pub fn get_type_var() -> Type {
 	Type::TypeVar(TYPE_VAR_COUNTER.fetch_add(1, Ordering::SeqCst))
-}
-
-fn new_expr_ast(loc: SourceLoc, value: ExprVal) -> AST {
-	ExprNode(new_expr(loc, value))
 }
 
 fn new_expr(loc: SourceLoc, value: ExprVal) -> Expr {

@@ -5,8 +5,12 @@ version = "0.0.1"
 [[bin]]
 name = "brevis"
 
+[profile.release]
+debug = 1
+
 [workspace]
 
 [dependencies]
+coz = "0.1"
 regex = "1"
 brevis-lib = { path = "./lib/" }

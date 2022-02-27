@@ -1,5 +1,6 @@
 use std::collections::{
 	VecDeque,
+	HashSet,
 };
 
 use crate::lex::{
@@ -12,12 +13,6 @@ use crate::lex::{
 };
 
 #[derive(Clone, Debug)]
-pub enum AST {
-	ExprNode(Expr),
-	LetNode(Let),
-}
-
-#[derive(Clone, Debug)]
 pub struct Expr {
 	pub val: ExprVal,
 	pub loc: SourceLoc,
@@ -28,8 +23,9 @@ pub struct Expr {
 pub enum ExprVal {
 	LiteralNode(Literal),
 
+	LetNode(Let),
 	VarNode(Variable),
-	BlockNode(VecDeque<AST>),
+	BlockNode(VecDeque<Expr>),
 	LambdaNode(Lambda),
 	IfNode(IfElse),
 
@@ -84,8 +80,7 @@ pub struct Unary {
 #[derive(Clone, Debug)]
 pub struct Lambda {
 	pub args: VecDeque<Parameter>,
-	pub generics: Vec<u16>,
-	pub captured: Vec<Variable>,
+	pub captured: HashSet<Parameter>,
 	pub body: Box<Expr>,
 }
 
@@ -93,6 +88,7 @@ pub struct Lambda {
 pub struct Parameter {
 	pub name: String,
 	pub r#type: Type,
+	pub mutable: bool,
 	pub name_loc: SourceLoc,
 	pub type_loc: Option<SourceLoc>,
 }
@@ -109,11 +105,7 @@ pub struct Let {
 	pub def: Option<Box<Expr>>,
 }
 
-#[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash, PartialOrd, Ord)]
-pub struct GenericType {
-	pub generics: Vec<u16>, // list of typevars
-	pub uninstantiated: Type, // a type that may contain those typevars
-}
+pub type TypeVarId = usize;
 
 #[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
@@ -129,7 +121,10 @@ pub enum Type {
 // The argument types, ending with the return type
 	Func(Vec<Type>),
 
-	TypeVar(u16),
+// A type generic over these arguments
+	Forall(Vec<TypeVarId>, Box<Type>),
+
+	TypeVar(TypeVarId),
 }
 
 #[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash, PartialOrd, Ord)]
@@ -138,12 +133,80 @@ pub struct AggregateType {
 	pub r#type: Type,
 }
 
+impl Expr {
+// Transforms an expression recursively, with given functions.
+// A nice helper for functions that really just need to make small
+// modifications to the AST, without removing anything.
+// Trans returns a boolean, indicating if transform
+// should recurse further into this node, and if so, post_trans
+// is also run after the recursion.
+	pub fn transform<E, T>(&mut self, mut trans: E, mut post_trans: T)
+	where E: for<'r> FnMut(&'r mut Expr) -> bool,
+		T: for<'r> FnMut(&'r mut Expr)
+	{
+		use self::ExprVal::*;
 
-impl GenericType {
-	pub fn new(t: Type) -> Self {
-		GenericType {
-			uninstantiated: t,
-			generics: Vec::new(),
+	// the boolean marks "are we exiting?," i.e. do we run post_trans?
+		let mut call_stack: Vec<(&mut Expr, bool)> = vec![ (self, false) ];
+
+		while let Some((current, exiting)) = call_stack.pop() {
+			if exiting {
+				post_trans(current);
+			} else if trans(current) {
+				unsafe {
+					call_stack.push((&mut *(current as *mut Expr), true));
+					match &mut current.val {
+					// Dead ends, all done!
+						LiteralNode(Literal::AtomicLiteral(_)) | VarNode(_) => {},
+
+						LiteralNode(Literal::StructLiteral(ref mut s)) => {
+							for agg in s {
+								call_stack.push((&mut agg.val, false));
+							}
+						}
+
+						BlockNode(ref mut b) => {
+							for line in b.iter_mut().rev() {
+								call_stack.push((line, false));
+							}
+						}
+
+						LetNode(ref mut l) => {
+							if let Some(box def) = &mut l.def {
+								call_stack.push((def, false));
+							}
+						}
+
+						LambdaNode(ref mut lam) => {
+							call_stack.push((&mut lam.body, false));
+						}
+
+						IfNode(ref mut ifelse) => {
+							call_stack.push((&mut ifelse.cond, false));
+							call_stack.push((&mut ifelse.then, false));
+							if let Some(ref mut e) = ifelse.r#else {
+								call_stack.push((e, false));
+							}
+						}
+
+						UnaryNode(ref mut u) => {
+							call_stack.push((&mut u.expr, false));
+						}
+
+						BinaryNode(ref mut b) => {
+							call_stack.push((&mut b.right, false));
+							call_stack.push((&mut b.left, false));
+						}
+
+						CallNode(ref mut c) => {
+							call_stack.push((&mut *c.func, false));
+							for arg in &mut c.args {
+								call_stack.push((arg, false));
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 }

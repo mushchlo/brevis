@@ -1,16 +1,25 @@
 use crate::lex::cradle::SourceLoc;
 
+
+#[derive(Hash, PartialEq, std::cmp::Eq)]
 pub struct ErrorMessage {
 	pub msg: String,
-	pub origin: SourceLoc,
+	pub origins: Vec<SourceLoc>,
 }
 
 pub fn print_error<F>(source: &str, err: ErrorMessage, errfn: F)
 where F: Fn(String) {
+	let origins_str = err.origins.iter()
+		.map(|loc| format!("{}", loc.start))
+		.reduce(|acc, next| acc + ", " + &next)
+		.unwrap();
 	errfn(format!("At {}, {}\n{}\n",
-		err.origin.start,
+		origins_str,
 		err.msg,
-		get_context(source, err.origin)
+		err.origins.into_iter()
+			.map(|loc| get_context(source, loc))
+			.reduce(|acc, next| acc + "\n" + &next)
+			.unwrap()
 	));
 }
 

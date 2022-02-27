@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::{
 	parse::ast::{
 		*,
-		AST::*,
 		ExprVal::*,
 	},
 	lex::cradle::SourceLoc,
@@ -16,38 +15,31 @@ fn unique_name() -> String {
 		format!("{}", COUNTER.fetch_add(1, Ordering::SeqCst))
 }
 
-pub fn anfify(a: AST) -> AST {
-	match a {
-		LetNode(l) =>
-			LetNode(Let {
-				var: l.var.clone(),
-				def:
-					if let Some(box def) = l.def {
-						Some(box anfify_expr(def))
-					}  else { None }
-			}),
-		ExprNode(e) =>
-			ExprNode(anfify_expr(e)),
-	}
-}
-
 /// Reorders an expression in administrative normal form
-pub fn anfify_expr(e: Expr) -> Expr {
+pub fn anfify(e: Expr) -> Expr {
 	Expr {
 		r#type: e.r#type.clone(),
-	// This is an expression wildly different from the source code,
-	// so there's not really a source position to store.
 		loc: e.loc,
 		val:
 			match e.val {
 				LiteralNode(lit) => LiteralNode(lit),
 				VarNode(v) =>
 					VarNode(v),
+				LetNode(l) =>
+					LetNode(Let {
+						var: l.var.clone(),
+						def:
+							if let Some(box def) = l.def {
+								Some(box anfify(def))
+							} else {
+								None
+							}
+					}),
 				IfNode(i) =>
 					IfNode(IfElse {
-						cond: box anfify_expr(*i.cond),
-						then: box anfify_expr(*i.then),
-						r#else: i.r#else.map(|box e| box anfify_expr(e)),
+						cond: box anfify(*i.cond),
+						then: box anfify(*i.then),
+						r#else: i.r#else.map(|box e| box anfify(e)),
 					}),
 				BlockNode(b) =>
 					BlockNode(
@@ -56,22 +48,21 @@ pub fn anfify_expr(e: Expr) -> Expr {
 				LambdaNode(l) =>
 					LambdaNode(Lambda {
 						args: l.args,
-						generics: l.generics,
 						captured: l.captured,
-						body: Box::new(anfify_expr(*l.body))
+						body: Box::new(anfify(*l.body))
 					}),
 				UnaryNode(u) =>
 					UnaryNode(Unary {
 						op: u.op,
 						op_loc: u.op_loc,
-						expr: Box::new(anfify_expr(*u.expr))
+						expr: Box::new(anfify(*u.expr))
 					}),
 				BinaryNode(b) =>
 					BinaryNode(Binary {
 						op: b.op,
 						op_loc: b.op_loc,
-						left: box anfify_expr(*b.left),
-						right: box anfify_expr(*b.right),
+						left: box anfify(*b.left),
+						right: box anfify(*b.right),
 					}),
 				CallNode(c) => {
 					let mut block = VecDeque::new();
@@ -84,17 +75,23 @@ pub fn anfify_expr(e: Expr) -> Expr {
 								let name = unique_name();
 								let cloned_arg_t = arg.r#type.clone();
 								block.push_back(
-									LetNode(Let {
-										var:
-											Parameter {
-												name: name.clone(),
-											// Zero values, as this variable doesn't exist in the source code.
-												name_loc: SourceLoc::nonexistent(),
-												type_loc: None,
-												r#type: arg.r#type.clone()
-											},
-										def: Some(box anfify_expr(arg))
-									})
+									Expr {
+										val:
+											LetNode(Let {
+												var:
+													Parameter {
+														name: name.clone(),
+														mutable: false,
+													// Zero values, as this variable doesn't exist in the source code.
+														name_loc: SourceLoc::nonexistent(),
+														type_loc: None,
+														r#type: arg.r#type.clone()
+													},
+												def: Some(box anfify(arg)),
+											}),
+										r#type: Type::Void,
+										loc: SourceLoc::nonexistent(),
+									}
 								);
 								Expr {
 									val: VarNode(
@@ -110,14 +107,14 @@ pub fn anfify_expr(e: Expr) -> Expr {
 						});
 					}
 					block.push_back(
-						ExprNode(Expr {
+						Expr {
 							val: CallNode(Call {
 								args: trivial_args,
-								func: Box::new(anfify_expr(*c.func))
+								func: Box::new(anfify(*c.func))
 							}),
 							loc: SourceLoc::nonexistent(),
 							r#type: e.r#type
-						})
+						}
 					);
 
 					BlockNode(block)

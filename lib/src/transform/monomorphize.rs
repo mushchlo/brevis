@@ -7,16 +7,19 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::{
 	lex::cradle::SourceLoc,
 	parse::ast::{
-		AST,
 		Literal::*,
 		Expr,
 		ExprVal::*,
 		Type,
+		TypeVarId,
 		Let,
 		Parameter,
 		Variable,
 	},
 	core::core_vals,
+	types::{
+		annotate_helper,
+	},
 };
 
 
@@ -29,39 +32,6 @@ static MONOMORPHIZE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 // For every block in an AST, monomorphize() will place new declarations of monomorphized
 // functions in context, and modify calls to refer to those monomorphized functions by their proper
 // names.
-
-impl AST {
-	fn monomorphize(
-		&mut self,
-		fns: &mut Vec<HashMap<String, (Expr, Vec<u16>)>>,
-		monomorphized_fns: &mut HashMap<(String, Vec<(u16, Type)>), String>
-	) {
-		match self {
-			AST::LetNode(ref mut l) => {
-				if let Some(ref mut e) = l.def {
-					e.monomorphize(fns, monomorphized_fns);
-					match &e.val {
-						LambdaNode(lam) if !lam.generics.is_empty() => {
-							fns.last_mut().unwrap().insert(
-								l.var.name.clone(),
-								(*e.clone(), lam.generics.clone())
-							);
-						// We're monomorphizing this function, no reason for its generic
-						// version to exist!
-							l.def = None;
-							l.var.r#type = Type::Void;
-						}
-						_ => {}
-					}
-				}
-			}
-			AST::ExprNode(ref mut e) => {
-				e.monomorphize(fns, monomorphized_fns)
-			}
-		}
-	}
-}
-
 impl Expr {
 	fn env_find<V: Clone + std::fmt::Debug>(env: &[HashMap<String, V>], fn_name: &str) -> V {
 		for map in env {
@@ -76,8 +46,8 @@ impl Expr {
 
 	pub fn monomorphize(
 		&mut self,
-		fns: &mut Vec<HashMap<String, (Expr, Vec<u16>)>>,
-		monomorphized_fns: &mut HashMap<(String, Vec<(u16, Type)>), String>
+		fns: &mut Vec<HashMap<String, (Expr, Vec<TypeVarId>)>>,
+		monomorphized_fns: &mut HashMap<(String, Vec<(TypeVarId, Type)>), String>
 	) {
 		match self.val {
 			CallNode(ref mut c) => {
@@ -112,6 +82,25 @@ impl Expr {
 				}
 			}
 
+			LetNode(ref mut l) => {
+				if let Some(ref mut e) = l.def {
+					e.monomorphize(fns, monomorphized_fns);
+					match &e.r#type {
+						Type::Forall(generics, _) if !generics.is_empty() => {
+							fns.last_mut().unwrap().insert(
+								l.var.name.clone(),
+								(*e.clone(), generics.clone())
+							);
+						// We're monomorphizing this function, no reason for its generic
+						// version to exist!
+							l.def = None;
+							l.var.r#type = Type::Void;
+						}
+						_ => {}
+					}
+				}
+			}
+
 			BlockNode(ref mut b) => {
 				fns.push(HashMap::new());
 				for line in b.iter_mut() {
@@ -119,8 +108,8 @@ impl Expr {
 				}
 				*b = b.clone().into_iter()
 					.filter(|line|
-						match line {
-							AST::LetNode(l) =>
+						match &line.val {
+							LetNode(l) =>
 								!fns.last().unwrap().contains_key(&l.var.name),
 							_ => true
 						}
@@ -129,27 +118,35 @@ impl Expr {
 
 				let local_fn_declarations = fns.pop().unwrap();
 
-				let mut monomorphized_defs = monomorphized_fns
-					.iter_mut()
+				let mut monomorphized_defs = monomorphized_fns.iter_mut()
 					.filter(|((generic_name, _), _)|
 						local_fn_declarations.iter()
 							.any(|(name, _)| name == generic_name)
 					)
 					.map(|((generic_name, instantiation), monomorphized_name)| {
 						let (mut mono_fn, _) = local_fn_declarations[generic_name].clone();
-						mono_fn.annotate_helper(&instantiation.clone().into_iter().collect(), true);
 
-						AST::LetNode(Let {
-							var: Parameter {
-								name: monomorphized_name.clone(),
-							// These are zero values, as this variable doesn't
-							// exist in the source code.
-								name_loc: SourceLoc::nonexistent(),
-								type_loc: None,
-								r#type: mono_fn.r#type.clone(),
-							},
-							def: Some(box mono_fn)
-						})
+						let mut substitutions = instantiation.clone().into_iter().collect();
+						let trans_expr = annotate_helper(&mut substitutions, None, None, true, false);
+						mono_fn.transform(trans_expr, |_| {});
+
+						Expr {
+							val:
+								LetNode(Let {
+									var: Parameter {
+										name: monomorphized_name.clone(),
+										mutable: false,
+									// These are zero values, as this variable doesn't
+									// exist in the source code.
+										name_loc: SourceLoc::nonexistent(),
+										type_loc: None,
+										r#type: mono_fn.r#type.clone(),
+									},
+									def: Some(box mono_fn)
+								}),
+							r#type: Type::Void,
+							loc: SourceLoc::nonexistent(),
+						}
 					})
 					.collect::<VecDeque<_>>();
 				monomorphized_defs.append(b);

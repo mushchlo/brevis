@@ -69,6 +69,7 @@ use self::OpID::*;
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum KeyWord {
 	Let,
+	Mut,
 	If,
 	Else,
 // TODO: eventually, the unit type will be empty struct. it is dumb to have two unit values.
@@ -79,12 +80,14 @@ pub enum KeyWord {
 	String,
 	Union,
 	Struct,
+	Arrow,
 	#[allow(non_camel_case_types)]
 	λ,
 }
 
 pub const KEYWORD_DICT: &[(KeyWord, &str)] = &[
 	(KeyWord::Let, "let"),
+	(KeyWord::Mut, "mut"),
 	(KeyWord::If, "if"),
 	(KeyWord::Else, "else"),
 	(KeyWord::Void, "void"),

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::parse::ast::{
 	Type,
 	Type::*,
+	TypeVarId,
 };
 
 impl std::fmt::Display for Type {
@@ -12,27 +13,37 @@ impl std::fmt::Display for Type {
 }
 
 // Used in errors like "expected an integer, ..."
-pub fn name_of(t: &Type) -> &str {
+pub fn name_of(t: &Type) -> String {
 	match t {
-		Void => " void literal",
-		Int => "n integer",
-		Float => " floating-point number",
-		Str => " string",
-		Bool => " boolean",
-		TypeVar(_) => " generic value",
-		Struct(_) => " structure",
-		Pointer(_) => " pointer",
-		Func(_) => " function",
+		Void => " void literal".to_string(),
+		Int => "n integer".to_string(),
+		Float => " floating-point number".to_string(),
+		Str => " string".to_string(),
+		Bool => " boolean".to_string(),
+		Forall(_, sub_t) => format!(" generic {}", name_of(sub_t)),
+		TypeVar(_) => " generic value".to_string(),
+		Struct(_) => " structure".to_string(),
+		Pointer(_) => " pointer".to_string(),
+		Func(_) => " function".to_string(),
 	}
 }
 
-fn display_type(t: &Type, generic_names: &mut HashMap<u16, char>) -> String {
+fn display_type(t: &Type, generic_names: &mut HashMap<TypeVarId, char>) -> String {
 	match t {
 		Void => "void".to_string(),
 		Int => "int".to_string(),
 		Float => "float".to_string(),
 		Str => "string".to_string(),
 		Bool => "bool".to_string(),
+		Forall(args, sub_t) if args.is_empty() => display_type(sub_t, generic_names),
+		Forall(args, sub_t) =>
+			format!("forall {} => {}",
+				args.iter()
+					.map(|&tv| display_type(&TypeVar(tv), generic_names))
+					.reduce(|acc, next| acc + ", " + &next)
+					.unwrap(),
+				display_type(sub_t, generic_names)
+			),
 		TypeVar(v) => {
 			let generic_names_copy = generic_names.clone();
 			let entry = generic_names.entry(*v);

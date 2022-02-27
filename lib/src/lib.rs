@@ -8,9 +8,9 @@ use crate::{
 	lex::lex,
 	codegen::{
 		Compilation,
-		compile_expr_js
+		compile_js
 	},
-	transform::anfify_expr,
+	transform::anfify,
 	error::print_error,
 };
 use wasm_bindgen::prelude::*;
@@ -25,9 +25,12 @@ pub mod core;
 mod codegen;
 mod error;
 mod lex;
+mod namespace;
 mod parse;
 mod transform;
 mod types;
+mod util;
+mod verify;
 
 #[wasm_bindgen]
 pub fn web_compile(src: String, core_fns: String, backend: String, err_fn: &js_sys::Function) -> String {
@@ -43,10 +46,16 @@ pub fn web_compile(src: String, core_fns: String, backend: String, err_fn: &js_s
 pub fn compile<F>(src: &str, core_fns: &str, backend: &str, err_fn: F) -> String
 where F: Fn(String) {
 	let mut lexed = lex(src);
+	coz::progress!("done lexing");
 	let mut parsed = lexed.parse();
-	let errors = parsed.annotate();
+	coz::progress!("done parsing");
+	let mut errors = verify::verify(&mut parsed);
+	parsed.annotate_captures();
+	coz::progress!("done annotating captures");
+	errors.extend(parsed.annotate());
+	coz::progress!("done inferring types!");
 
-	if !errors.is_empty() {
+	let tmp = if !errors.is_empty() {
 		let err_count = errors.len();
 		for err in errors {
 			print_error(src, err, &err_fn);
@@ -54,62 +63,24 @@ where F: Fn(String) {
 		err_fn(format!("Ended compilation due to the previous {} errors", err_count));
 		std::process::exit(1);
 	} else {
-println!("{:#?}", parsed);
 		parsed.monomorphize(&mut Vec::new(), &mut HashMap::new());
-println!("{:#?}", parsed);
-		let parsed_anf = anfify_expr(parsed);
-//println!("{:#?}", parsed_anf);
+		coz::progress!("monomorphization");
+		let parsed_anf = anfify(parsed);
+		coz::progress!("anfification");
 		match backend {
 			"c" => {
 				let mut compiler = Compilation::new();
-				let compiled = compiler.compile_expr(parsed_anf);
+				let compiled = compiler.compile(parsed_anf);
 				format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}", core_fns, compiler.global_defs, compiler.fn_context.pop().unwrap(), compiler.global, compiled)
 			}
 			"js" =>
-				format!("{}\n{}; buffered", core_fns, compile_expr_js(parsed_anf)),
+				format!("{}\n{}; buffered", core_fns, compile_js(parsed_anf)),
 
 			_ => "".to_string()
 		}
-	}
+	};
 
+	coz::progress!("compilation");
+
+	tmp
 }
-/*
-#[wasm_bindgen]
-pub fn js_compile(s: String, core_fns: String, backend: String, err_fn: &js_sys::Function) -> String {
-	console_error_panic_hook::set_once();
-	let mut lexed = lex(&s);
-	let mut parsed = lexed.parse();
-	let errors = parsed.annotate();
-
-	if !errors.is_empty() {
-		let err_count = errors.len();
-		for err in errors {
-			print_error(&s, err, |e| {
-				match err_fn.call1(&JsValue::null(), &JsValue::from(e)) {
-					Ok(_) => {},
-					Err(_) => panic!(),
-				}
-			});
-		}
-		match err_fn.call1(&JsValue::null(), &JsValue::from(format!("Ended compilation due to the previous {} errors", err_count))) {
-			Ok(_) => {},
-			Err(_) => unreachable!(),
-		};
-		"".to_string()
-	} else {
-		parsed.monomorphize(&mut Vec::new(), &mut HashMap::new());
-		let mut parsed_anf = anfify_expr(parsed);
-		match backend.as_str() {
-			"c" => {
-				let mut compiler = Compilation::new();
-				let compiled = compiler.compile_expr(parsed_anf);
-				format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}", core_fns, compiler.global_defs, compiler.fn_context.pop().unwrap(), compiler.global, compiled)
-			}
-			"js" =>
-				format!("{}\n{}; buffered", core_fns, compile_expr_js(parsed_anf)),
-
-			_ => "".to_string()
-		}
-	}
-}
-*/

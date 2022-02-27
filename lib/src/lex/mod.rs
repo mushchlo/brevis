@@ -11,6 +11,7 @@ use crate::lex::tok::{
 	TokenValue::*,
 	TokenLiteral,
 	TokenLiteral::*,
+	KeyWord,
 	OpID::*,
 	UOpID::*,
 	KEYWORD_DICT,
@@ -104,7 +105,6 @@ impl CharsPos<'_> {
 	fn get_strlit(&mut self) -> Token {
 		let mut escaped = false;
 
-		self.skip_char('"');
 		let strlit = self.make_token(|s| {
 			TokenValue::Literal(TokenLiteral::StrLit(s.read_lit(|&ch| {
 				let cont = ch != '"' || escaped;
@@ -236,6 +236,7 @@ fn map_op(opstr: String, prev_op: Option<&TokenValue>) -> TokenValue {
 		"@" => UnaryOp(At),
 		"&" => UnaryOp(Ref),
 		"=" => AssignOp(Eq),
+		"->" => KeyWord(KeyWord::Arrow),
 		op => BinaryOp(
 			match_dict(BINARY_OP_DICT.iter().cloned(), op)
 				.unwrap_or_else(|| panic!("invalid operator `{}`", opstr)),

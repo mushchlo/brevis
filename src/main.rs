@@ -23,7 +23,9 @@ fn main() {
 		};
 
 	let contents = fs::read_to_string(env::args().last().unwrap()).expect("failed to open/read file");
+	coz::progress!("read file");
 	let compiled = brevislib::compile(&contents, core, target, |e| eprintln!("{}", e));
+	coz::progress!("compiled");
 	println!("{}", compiled);
 
 }

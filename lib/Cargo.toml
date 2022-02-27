@@ -8,6 +8,7 @@ crate-type = [ "lib", "cdylib" ]
 
 [dependencies]
 lazy_static = "1.4.0"
+coz = "0.1"
 "peeking_take_while" = "0.1.2"
 maplit = "1.0.2"
 wasm-bindgen = "0.2.78"

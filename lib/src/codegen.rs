@@ -56,23 +56,7 @@ fn lambda_name() -> String {
 	format!("lambda_{}", LAMBDA_COUNTER.fetch_add(1, Ordering::SeqCst))
 }
 
-pub fn compile_js(a: AST) -> String {
-	match a {
-		AST::LetNode(l) =>
-			format!("({} = {})",
-				mk_id(l.var.name),
-				if let Some(box def) = l.def {
-					compile_expr_js(def)
-				} else {
-					"false".to_string()
-				}
-			),
-		AST::ExprNode(e) =>
-			compile_expr_js(e)
-	}
-}
-
-pub fn compile_expr_js(e: Expr) -> String {
+pub fn compile_js(e: Expr) -> String {
 	format!("({})", match e.val {
 		LambdaNode(l) =>
 			format!("(function ({}) {{ return {}; }})",
@@ -80,12 +64,21 @@ pub fn compile_expr_js(e: Expr) -> String {
 					.map(|v| mk_id(v.name.clone()))
 					.reduce(|acc, next| acc + ", " + &next)
 					.unwrap_or_else(|| "".to_string()),
-				compile_expr_js(*l.body)
+				compile_js(*l.body)
 			),
 		LiteralNode(AtomicLiteral(atom)) =>
 			compile_atomic(atom),
 		LiteralNode(StructLiteral(_s)) =>
 			panic!("structs not yet implemented for js backend"),
+		LetNode(l) =>
+			format!("({} = {})",
+				mk_id(l.var.name),
+				if let Some(box def) = l.def {
+					compile_js(def)
+				} else {
+					"false".to_string()
+				}
+			),
 		VarNode(v) =>
 			mk_id(v.name),
 		BlockNode(b) =>
@@ -97,10 +90,10 @@ pub fn compile_expr_js(e: Expr) -> String {
 			),
 		IfNode(ifelse) =>
 			format!("({}) ? ({}) : ({})",
-				compile_expr_js(*ifelse.cond),
-				compile_expr_js(*ifelse.then),
+				compile_js(*ifelse.cond),
+				compile_js(*ifelse.then),
 				if let Some(box e) = ifelse.r#else {
-					compile_expr_js(e)
+					compile_js(e)
 				} else {
 					"false".to_string()
 				}
@@ -112,26 +105,26 @@ pub fn compile_expr_js(e: Expr) -> String {
 					Neg => "-",
 					_ => panic!("unary is not unary!")
 				},
-				compile_expr_js(*u.expr)
+				compile_js(*u.expr)
 			),
 		BinaryNode(b) =>
 			if b.op == Xor {
 				format!("!({}) != !({})",
-					compile_expr_js(*b.left),
-					compile_expr_js(*b.right)
+					compile_js(*b.left),
+					compile_js(*b.right)
 				)
 			} else {
 				format!("({}) {} ({})",
-					compile_expr_js(*b.left),
+					compile_js(*b.left),
 					if !JS_OP.contains_key(&b.op) {
 						panic!("{:?} is not in c_op", b.op)
 					} else { JS_OP[&b.op] },
-					compile_expr_js(*b.right)
+					compile_js(*b.right)
 				)
 			},
 		CallNode(c) =>
 			format!("{}({})",
-				compile_expr_js(*c.func),
+				compile_js(*c.func),
 				c.args.iter()
 					.map(|v| compile_trivial(v.clone()))
 					.reduce(|acc, next| acc + ", " + &next)
@@ -157,41 +150,12 @@ impl Compilation {
 		}
 	}
 
-	pub fn compile(&mut self, a: AST) -> String {
-		match a {
-			AST::LetNode(l) => {
-				let c_type_name = self.compile_type_name(l.var.r#type, mk_id(l.var.name.clone()), true);
-				let def_str =
-					match l.def {
-						Some(box Expr {
-							val: LambdaNode(lambda),
-							..
-						}) => {
-							let c_fn = self.compile_lambda(lambda, Some(&c_type_name));
-							format!("{} = {}", mk_id(l.var.name), c_fn)
-						}
-
-						Some(box expr) =>
-							format!("{} = {}", mk_id(l.var.name), self.compile_expr(expr)),
-
-						_ =>
-							"".to_string()
-					};
-				let prev_context = self.fn_context.pop().unwrap();
-				self.fn_context.push(
-					format!("{}{};\n", prev_context, c_type_name)
-				);
-				def_str + "\n"
-			}
-
-			AST::ExprNode(e) =>
-				format!("({})", self.compile_expr(e))
-		}
-	}
-
 // type_name is used for functions that are named, and therefore can recurse,
 // so that they can have their own name defined at the top of the function.
 	fn compile_lambda(&mut self, l: Lambda, type_name: Option<&str>) -> String {
+		if !l.captured.is_empty() {
+			panic!("closures are not yet supported in C codegen.");
+		}
 		let args_t =
 			l.args.iter()
 				.map(|a| a.r#type.clone())
@@ -205,7 +169,7 @@ impl Compilation {
 		let return_t = l.body.r#type.clone();
 
 		self.fn_context.push("".to_string());
-		let c_body = self.compile_expr(*l.body);
+		let c_body = self.compile(*l.body);
 		let declarations = self.fn_context.pop();
 		let fn_declaration =
 			format!("{}\n{{\n{}{}{}{};\n}}\n",
@@ -230,7 +194,7 @@ impl Compilation {
 	}
 
 
-	pub fn compile_expr(&mut self, e: Expr) -> String {
+	pub fn compile(&mut self, e: Expr) -> String {
 		match e.val {
 			LiteralNode(lit) =>
 				self.compile_literal(lit),
@@ -260,10 +224,10 @@ impl Compilation {
 
 			IfNode(ifelse) =>
 				format!("({}) ? ({}) : ({})",
-						self.compile_expr(*ifelse.cond),
-						self.compile_expr(*ifelse.then),
+						self.compile(*ifelse.cond),
+						self.compile(*ifelse.then),
 						if let Some(box expr) = ifelse.r#else {
-							self.compile_expr(expr)
+							self.compile(expr)
 						} else {
 							"0".to_string()
 						}
@@ -277,13 +241,38 @@ impl Compilation {
 					At => "*",
 				};
 
-				format!("{}({})", c_op, self.compile_expr(*u.expr))
+				format!("{}({})", c_op, self.compile(*u.expr))
+			}
+
+			LetNode(l) => {
+				let c_type_name = self.compile_type_name(l.var.r#type, mk_id(l.var.name.clone()), true);
+				let def_str =
+					match l.def {
+						Some(box Expr {
+							val: LambdaNode(lambda),
+							..
+						}) => {
+							let c_fn = self.compile_lambda(lambda, Some(&c_type_name));
+							format!("{} = {}", mk_id(l.var.name), c_fn)
+						}
+
+						Some(box expr) =>
+							format!("{} = {}", mk_id(l.var.name), self.compile(expr)),
+
+						_ =>
+							"".to_string()
+					};
+				let prev_context = self.fn_context.pop().unwrap();
+				self.fn_context.push(
+					format!("{}{};\n", prev_context, c_type_name)
+				);
+				def_str + "\n"
 			}
 
 			BinaryNode(b) => {
 				let (c_left, c_right) = (
-					self.compile_expr(*b.left),
-					self.compile_expr(*b.right)
+					self.compile(*b.left),
+					self.compile(*b.right)
 				);
 			// TODO: A special case of strings is only made because we still use
 			// C-strings! We should not use C-strings!!!!!!
@@ -314,7 +303,7 @@ impl Compilation {
 						.map(|tr| compile_trivial(tr.clone()))
 						.reduce(|acc, next| acc + ", " + &next)
 						.unwrap_or_else(|| "".to_string());
-				format!("{}({})", self.compile_expr(*c.func), args)
+				format!("{}({})", self.compile(*c.func), args)
 			}
 		}
 	}
@@ -371,7 +360,7 @@ impl Compilation {
 					&self.type_map[&Struct(s)]
 				}
 
-				TypeVar(_) => panic!("aaaa i cant make type {:#?}", t)
+				TypeVar(_) | Forall(_, _) => panic!("generic type {:#?} persisted into code generation, when it should have been removed by momonorphization", t)
 			}.to_string(),
 
 			if !name.is_empty() {
@@ -444,7 +433,7 @@ impl Compilation {
 							format!("{}{}{}",
 								acc,
 								if acc.is_empty() { "" } else { ", " },
-								self.compile_expr(e)
+								self.compile(e)
 							)
 						);
 
@@ -512,6 +501,6 @@ fn type_hash(t: Type) -> String {
 					.reduce(|acc, next| acc + "_" + &next)
 					.unwrap()
 			),
-		TypeVar(_) => panic!(),
+		TypeVar(_) | Forall(_, _) => panic!(),
 	}
 }
