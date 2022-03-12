@@ -375,7 +375,7 @@ pub fn solve_constraints(constraints: &[Constraint], errors: &mut HashSet<ErrorM
 	for constraint in constraints.iter() {
 		match constraint {
 			Constraint::Equal((t1, l1), (t2, l2)) => {
-				unify(&mut substitutions, errors, t1.clone(), t2.clone(), (*l1, *l2));
+				unify(&mut substitutions, errors, t1, t2, (*l1, *l2));
 			}
 
 			Constraint::HasMember((t, l1), (m, l2)) => {
@@ -394,7 +394,7 @@ pub fn solve_constraints(constraints: &[Constraint], errors: &mut HashSet<ErrorM
 		// proper trait.
 		let locs = members_locations.iter().map(|(_, locs)| *locs).next().unwrap();
 		let members = members_locations.into_iter().map(|(types, _)| types).collect();
-		unify(&mut substitutions, errors, t.clone(), Struct(members), locs);
+		unify(&mut substitutions, errors, t, &Struct(members), locs);
 	}
 
 	substitutions
@@ -435,8 +435,7 @@ pub fn substitute(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> Type {
 		TypeVar(v) if substitutions.contains_key(v) =>
 			substitute(
 				substitutions,
-				&substitutions
-					.get(v)
+				substitutions.get(v)
 					.unwrap_or_else(|| unreachable!())
 			),
 
@@ -459,7 +458,7 @@ pub fn substitute(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> Type {
 			let free = free_in_type(substitutions, &new_generic_t);
 			let new_type_vars = type_vars.iter().copied().filter(|tv| free.contains(tv)).collect::<Vec<_>>();
 
-			if new_type_vars.len() > 0 {
+			if !new_type_vars.is_empty() {
 				Forall(new_type_vars, box new_generic_t)
 			} else {
 				new_generic_t
@@ -472,12 +471,11 @@ pub fn substitute(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> Type {
 fn unify(
 	substitutions: &mut HashMap<TypeVarId, Type>,
 	errors: &mut HashSet<ErrorMessage>,
-	t1: Type,
-	t2: Type,
+	t1: &Type,
+	t2: &Type,
 	origins: (SourceLoc, SourceLoc)
 ) {
-	// TODO: Remove unecessary up-front clone
-	match (t1.clone(), t2.clone()) {
+	match (&t1, &t2) {
 		(Func(args1), Func(args2)) if args1.len() != args2.len() => {
 			errors.insert(ErrorMessage {
 				msg: format!("functions with unequal lengths are attempting to be unified, {} and {}, due to the following lines", t1, t2),
@@ -486,35 +484,32 @@ fn unify(
 		}
 
 		(Func(args1), Func(args2)) => {
-			for (t3, t4) in args1.into_iter().zip(args2.into_iter()) {
+			for (t3, t4) in args1.iter().zip(args2.iter()) {
 				unify(substitutions, errors, t3, t4, origins);
 			}
 		}
 
-		(Struct(mut s1), Struct(mut s2)) => {
-			if s1.len() != s2.len() {
-				panic!("no");
-			}
+		(Struct(s1), Struct(s2)) => {
+			assert_eq!(s1.len(), s2.len());
 
+			let (mut s1, mut s2) = (s1.clone(), s2.clone());
 			s1.sort();
 			s2.sort();
-			for (a1, a2) in s1.into_iter().zip(s2.into_iter()) {
-				if a1.name != a2.name {
-					panic!("bad");
-				}
-				unify(substitutions, errors, a1.r#type, a2.r#type, origins);
+			for (a1, a2) in s1.iter().zip(s2.iter()) {
+				assert_eq!(a1.name, a2.name);
+				unify(substitutions, errors, &a1.r#type, &a2.r#type, origins);
 			}
 		}
 
 		(Pointer(box r1), Pointer(box r2)) =>
 			unify(substitutions, errors, r1, r2, origins),
 
-		(Forall(args1, box generic_t1), Forall(args2, box generic_t2)) => {
-			if args1.len() == args2.len() {
+		(Forall(args1, generic_t1), Forall(args2, generic_t2)) => {
+			if args1.len() != args2.len() {
 				errors.insert(ErrorMessage {
 					msg: format!("there was a type mismatch between a `{}` and a `{}`, expected to be the same due to the following lines:",
-						Forall(args1, box generic_t1),
-						Forall(args2, box generic_t2),
+						Forall(args1.to_vec(), generic_t1.clone()),
+						Forall(args2.to_vec(), generic_t2.clone()),
 					),
 					origins: vec![ origins.0, origins.1 ],
 				});
@@ -524,31 +519,32 @@ fn unify(
 		}
 
 		(TypeVar(i), TypeVar(j)) if i == j => {}
-		(TypeVar(i), t) | (t, TypeVar(i)) if substitutions.contains_key(&i) => {
-			unify(substitutions, errors, t, substitutions[&i].clone(), origins)
+		(TypeVar(i), t) | (t, TypeVar(i)) if substitutions.contains_key(i) => {
+			let substituted = substitutions[i].clone();
+			unify(substitutions, errors, t, &substituted, origins)
 		}
 
 		(TypeVar(i), t) | (t, TypeVar(i)) => {
-			if occurs_in(substitutions, i, t.clone()) {
+			if occurs_in(substitutions, *i, t) {
 				errors.insert(ErrorMessage {
 					msg: format!("types `{}` and `{}`, expected to be the same due to the following lines, are recursive.",
-						substitute(substitutions, &t),
-						TypeVar(i)
+						substitute(substitutions, t),
+						TypeVar(*i)
 					),
 					origins: vec![ origins.0, origins.1 ],
 				});
 				return;
 			}
-			substitutions.insert(i, t);
+			substitutions.insert(*i, (*t).clone());
 		}
 
 		_ if t1 != t2 => {
 			errors.insert(ErrorMessage {
 				msg: format!("there was a type mismatch between a{} `{}`, and a{} `{}`, expected to be of the same type due to the following lines:",
-					name_of(&t1),
-					substitute(substitutions, &t1),
-					name_of(&t2),
-					substitute(substitutions, &t2),
+					name_of(t1),
+					substitute(substitutions, t1),
+					name_of(t2),
+					substitute(substitutions, t2),
 				),
 				origins: vec![ origins.0, origins.1 ],
 			});
@@ -557,25 +553,22 @@ fn unify(
 	}
 }
 
-fn occurs_in(substitutions: &HashMap<TypeVarId, Type>, index: TypeVarId, t: Type) -> bool {
+fn occurs_in(substitutions: &HashMap<TypeVarId, Type>, index: TypeVarId, t: &Type) -> bool {
 	match t {
 		Void | Int | Float | Str | Bool => false,
 
 		Pointer(box p) =>
 			occurs_in(substitutions, index, p),
 
-		TypeVar(i) if substitutions.contains_key(&i) => {
-			occurs_in(substitutions, index, substitutions[&i].clone())
-		}
+		TypeVar(i) if substitutions.contains_key(i) =>
+			occurs_in(substitutions, index, &substitutions[i].clone()),
 
-		TypeVar(i) => i == index,
+		TypeVar(i) => *i == index,
 
-		Struct(s) => s.into_iter().any(|a| occurs_in(substitutions, index, a.r#type)),
+		Struct(s) => s.iter().any(|a| occurs_in(substitutions, index, &a.r#type)),
 
-		Func(args_t) => {
-			args_t.into_iter()
-				.any(|t1| occurs_in(substitutions, index, t1))
-		}
+		Func(args_t) =>
+			args_t.iter().any(|t1| occurs_in(substitutions, index, t1)),
 
 		Forall(_, box generic_t) =>
 			occurs_in(substitutions, index, generic_t),
@@ -737,7 +730,7 @@ pub fn annotate_helper<'a>(
 			}
 
 			ExprVal::VarNode(ref mut v) => {
-				for (_, generic_t) in &mut v.generics {
+				for generic_t in v.generics.values_mut() {
 					*generic_t = substitute(substitutions, generic_t);
 				}
 			}
