@@ -2,22 +2,25 @@ use std::collections::{
 	HashMap,
 	VecDeque,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+	atomic::{AtomicUsize, Ordering},
+	Mutex,
+};
 
 use crate::{
 	lex::cradle::SourceLoc,
 	parse::ast::{
-		Literal::*,
 		Expr,
 		ExprVal::*,
-		Type,
-		TypeVarId,
 		Let,
+		Pattern,
 		Parameter,
 		Variable,
 	},
 	core::core_vals,
 	types::{
+		Type,
+		TypeVarId,
 		annotate_helper,
 	},
 	util::Env,
@@ -27,6 +30,10 @@ use crate::{
 static MONOMORPHIZE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 
+type DefTypevars = (Expr, Vec<TypeVarId>);
+type Instantiation = Vec<(TypeVarId, Type)>;
+
+
 // Monomorphization expects an already-inferred
 // AST, and thus should be run after type inference.
 
@@ -34,144 +41,105 @@ static MONOMORPHIZE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 // functions in context, and modify calls to refer to those monomorphized functions by their proper
 // names.
 impl Expr {
-	pub fn monomorphize(
-		&mut self,
-		fns: &mut Vec<HashMap<String, (Expr, Vec<TypeVarId>)>>,
-		monomorphized_fns: &mut HashMap<(String, Vec<(TypeVarId, Type)>), String>
-	) {
-		match self.val {
-			CallNode(ref mut c) => {
-				for arg in &mut c.args {
-					arg.monomorphize(fns, monomorphized_fns);
+	pub fn monomorphize(&mut self) {
+		let fns: Mutex<Vec<HashMap<String, DefTypevars>>> =
+			Mutex::new(Vec::new());
+
+		let monomorphized_fns: Mutex<HashMap<(String, Instantiation), String>> =
+			Mutex::new(HashMap::new());
+
+		let pre_trans = |e: &mut Expr| {
+			let mut fns = fns.lock().unwrap();
+			let mut monomorphized_fns = monomorphized_fns.lock().unwrap();
+
+			match &mut e.val {
+				BlockNode(_) => {
+					fns.push(HashMap::new());
 				}
-				c.func.monomorphize(fns, monomorphized_fns);
-			}
 
-			VarNode(ref mut v) => {
-				if !v.generics.is_empty() && !core_vals.contains_key(&v.name) {
-					let instantiation =
-						fns.find(&v.name).unwrap().1
-							.clone()
-							.into_iter()
-							.zip(v.generics.clone().into_iter())
-							.collect::<HashMap<_, _>>();
-
-					let mono_fn_name =
-						monomorphized_fns
-							.entry((v.name.clone(), instantiation.into_iter().collect()))
-							.or_insert_with(||
-								format!("monomorphized_{}__{}",
-									MONOMORPHIZE_COUNTER.fetch_add(1, Ordering::SeqCst),
-									v.name
-								)
-							);
-					 self.val=
-						VarNode(Variable {
+				VarNode(ref mut v) => {
+					if !v.generics.is_empty() && !core_vals.contains_key(&v.name) {
+						let generics = v.generics.clone();
+						let mono_fn_name =
+							monomorphized_fns
+								.entry((v.name.clone(), generics.into_iter().collect()))
+								.or_insert_with(||
+									format!("monomorphized_{}__{}",
+										MONOMORPHIZE_COUNTER.fetch_add(1, Ordering::SeqCst),
+										v.name
+									)
+								);
+						*v = Variable {
 							name: mono_fn_name.clone(),
-							generics: vec![],
-						});
+							generics: HashMap::new(),
+						};
+					}
 				}
+
+				_ => {}
 			}
 
-			LetNode(ref mut l) => {
-				if let Some(ref mut e) = l.def {
-					e.monomorphize(fns, monomorphized_fns);
-					match &e.r#type {
+			true
+		};
+
+		let post_trans = |e: &mut Expr| {
+			let mut fns = fns.lock().unwrap();
+			let mut monomorphized_fns = monomorphized_fns.lock().unwrap();
+			match &mut e.val {
+				LetNode(ref mut l) => {
+					match &l.def.r#type {
 						Type::Forall(generics, _) if !generics.is_empty() => {
-							fns.last_mut().unwrap().insert(
-								l.var.name.clone(),
-								(*e.clone(), generics.clone())
+							fns.insert_in_env(
+								l.declared.assert_assignee().name.clone(),
+								(*l.def.clone(), generics.clone())
 							);
-						// We're monomorphizing this function, no reason for its generic
-						// version to exist!
-							l.def = None;
-							l.var.r#type = Type::Void;
 						}
 						_ => {}
 					}
 				}
-			}
 
-			BlockNode(ref mut b) => {
-				fns.push(HashMap::new());
-				for line in b.iter_mut() {
-					line.monomorphize(fns, monomorphized_fns);
+				BlockNode(ref mut b) => {
+					let local_fn_declarations = fns.pop().unwrap();
+
+					let mut monomorphized_defs = monomorphized_fns.iter_mut()
+						.filter(|((generic_name, _), _)|
+							local_fn_declarations.iter()
+								.any(|(name, _)| name == generic_name)
+						)
+						.map(|((generic_name, instantiation), monomorphized_name)| {
+							let (mut mono_fn, _) = local_fn_declarations[generic_name].clone();
+
+							let mut substitutions = instantiation.clone().into_iter().collect();
+							let trans_expr = annotate_helper(&mut substitutions, None, None);
+							mono_fn.transform(trans_expr, |_| {});
+
+							Expr {
+								val:
+									LetNode(Let {
+										declared: Pattern::Assignee(Parameter {
+											name: monomorphized_name.clone(),
+											mutable: false,
+										// These are zero values, as this variable doesn't
+										// exist in the source code.
+											name_loc: SourceLoc::nonexistent(),
+											type_loc: None,
+											r#type: mono_fn.r#type.clone(),
+										}),
+										def: box mono_fn
+									}),
+								r#type: Type::Void,
+								loc: SourceLoc::nonexistent(),
+							}
+						})
+						.collect::<VecDeque<_>>();
+					monomorphized_defs.append(b);
+					*b = monomorphized_defs;
 				}
-				*b = b.clone().into_iter()
-					.filter(|line|
-						match &line.val {
-							LetNode(l) =>
-								!fns.last().unwrap().contains_key(&l.var.name),
-							_ => true
-						}
-					)
-					.collect::<VecDeque<_>>();
 
-				let local_fn_declarations = fns.pop().unwrap();
-
-				let mut monomorphized_defs = monomorphized_fns.iter_mut()
-					.filter(|((generic_name, _), _)|
-						local_fn_declarations.iter()
-							.any(|(name, _)| name == generic_name)
-					)
-					.map(|((generic_name, instantiation), monomorphized_name)| {
-						let (mut mono_fn, _) = local_fn_declarations[generic_name].clone();
-
-						let mut substitutions = instantiation.clone().into_iter().collect();
-						let trans_expr = annotate_helper(&mut substitutions, None, None, true, false);
-						mono_fn.transform(trans_expr, |_| {});
-
-						Expr {
-							val:
-								LetNode(Let {
-									var: Parameter {
-										name: monomorphized_name.clone(),
-										mutable: false,
-									// These are zero values, as this variable doesn't
-									// exist in the source code.
-										name_loc: SourceLoc::nonexistent(),
-										type_loc: None,
-										r#type: mono_fn.r#type.clone(),
-									},
-									def: Some(box mono_fn)
-								}),
-							r#type: Type::Void,
-							loc: SourceLoc::nonexistent(),
-						}
-					})
-					.collect::<VecDeque<_>>();
-				monomorphized_defs.append(b);
-				*b = monomorphized_defs;
+				_ => {},
 			}
+		};
 
-			LambdaNode(ref mut l) => {
-				l.body.monomorphize(fns, monomorphized_fns);
-			}
-
-			IfNode(ref mut ifelse) => {
-				ifelse.cond.monomorphize(fns, monomorphized_fns);
-				ifelse.then.monomorphize(fns, monomorphized_fns);
-				if let Some(ref mut branch) = ifelse.r#else {
-					branch.monomorphize(fns, monomorphized_fns);
-				};
-			}
-
-			UnaryNode(ref mut u) => {
-				u.expr.monomorphize(fns, monomorphized_fns);
-			}
-
-			BinaryNode(ref mut b) => {
-				b.right.monomorphize(fns, monomorphized_fns);
-				b.left.monomorphize(fns, monomorphized_fns);
-			}
-
-			LiteralNode(StructLiteral(ref mut s)) => {
-				for agg in s {
-					agg.val.monomorphize(fns, monomorphized_fns);
-				}
-			}
-
-			LiteralNode(AtomicLiteral(_)) => {}
-		}
+		self.transform(pre_trans, post_trans);
 	}
 }

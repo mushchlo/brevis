@@ -1,9 +1,11 @@
 use std::{
-	iter,
+	iter::{
+		self,
+		FromIterator,
+	},
 	collections::{
 		HashMap,
 		HashSet,
-		VecDeque,
 	},
 	sync::{
 		Mutex,
@@ -21,15 +23,17 @@ use crate::{
 		Binary,
 		Unary,
 		Variable,
+		Aggregate,
+		Literal::*,
+	},
+	types::{
 		Type,
 		Type::*,
 		TypeVarId,
-		Aggregate,
 		AggregateType,
-		Literal::*,
 	},
 	lex::tok::{
-		TokenLiteral::*,
+		LiteralVal::*,
 		OpID,
 	},
 	parse::get_type_var,
@@ -104,7 +108,7 @@ impl Inference {
 
 			ExprVal::LiteralNode(AtomicLiteral(lit)) => {
 				let mut new_lit = expr.clone();
-				new_lit.r#type = match lit {
+				new_lit.r#type = match lit.val {
 					StrLit(_) => Str,
 					IntLit(_) => Int,
 					FltLit(_) => Float,
@@ -173,15 +177,19 @@ impl Inference {
 			ExprVal::BlockNode(b) => {
 				self.env.new_stack();
 
-				let mut head = b;
-				let tail = head.pop_back().unwrap();
-				let mut new_block: VecDeque<_> =
-					head.into_iter()
-						.map(|line|
-							self.infer(line, constraints)
-						)
-						.collect();
-				new_block.push_back(self.infer(tail, constraints));
+				let mut new_block = b;
+			// We first infer each line, adding constraints to the pile, leaving the
+			// generalization and substitution of definitions until after. This properly
+			// infers variables that are used in declarations before they are constrained.
+				for line in &mut new_block {
+					if let ExprVal::LetNode(l) = &line.val {
+						for declared in l.declared.assignees() {
+							self.env.insert_in_env(declared.name.clone(), declared.r#type.clone());
+						}
+						constraints.push(l.declared.constrain_as(l.def.r#type.clone(), l.def.loc));
+					}
+					*line = self.infer(line.clone(), constraints);
+				}
 
 				self.env.pop();
 
@@ -193,24 +201,31 @@ impl Inference {
 			}
 
 			ExprVal::LetNode(mut l) => {
-			// The declared variable needs to be placed prematurely in the environment, in case
+			// The declared variables need to be placed prematurely in the environment, in case
 			// the definition is a recursive function. After inferring the definition, the declared
 			// variable is reinserted into the environment, with its inferred type.
-				self.env.insert_in_env(l.var.name.clone(), l.var.r#type.clone());
-				l.def =
-					l.def.clone().map(|def| {
-						let mut new_def = self.infer(*def, constraints);
-						let mut local_substitutions = self.solve_constraints(constraints);
+				for declared in l.declared.assignees() {
+					self.env.insert_in_env(declared.name.clone(), declared.r#type.clone());
+				}
+				l.def = {
+					let mut new_def = self.infer(*l.def, constraints);
+					let local_substitutions = solve_constraints(constraints, &mut self.errors);
+					new_def.r#type = generalize(
+						substitute(&local_substitutions, &new_def.r#type)
+					);
 
-						let trans_expr = annotate_helper(&mut local_substitutions, None, None, false, true);
-						new_def.transform(trans_expr, |_| {});
-						new_def.r#type = generalize(new_def.r#type.clone());
+					// Reinsert the declared variables, with their new generalized types.
+					l.declared.infer_as(
+						new_def.r#type.clone(),
+						new_def.loc,
+						&mut self.errors
+					);
+					for declared in l.declared.assignees() {
+						self.env.insert_in_env(declared.name.clone(), declared.r#type.clone());
+					}
 
-						l.var.r#type = new_def.r#type.clone();
-						self.env.insert_in_env(l.var.name.clone(), l.var.r#type.clone());
-
-						box new_def
-					});
+					box new_def
+				};
 				constraints.push(mk_eq(
 					&expr,
 					&Expr {
@@ -258,57 +273,24 @@ impl Inference {
 			}
 
 			ExprVal::VarNode(v) => {
-				let var_t = self.env.find(&v.name)
-					.cloned()
+				let var_t = self.env.find(&v.name).cloned()
 					.unwrap_or_else(||
 						panic!("unable to find variable {:#?} in the environment when inferring types, env looks like {:#?}",
 							v,
 							self.env.to_vec()
 						)
 					);
-				if let Forall(generics, box t) = var_t {
-					let new_generics = generics.iter().map(|_| get_type_var()).collect::<Vec<_>>();
-					let instantiation =
-						generics.into_iter()
-							.zip(new_generics.clone())
-							.collect();
+				let (r#type, generics) = instantiate(&var_t, &self.substitutions);
+				let val = ExprVal::VarNode(Variable {
+					name: v.name,
+					generics,
+				});
+				let loc = expr.loc;
+				let new_expr = Expr { val, loc, r#type };
 
-					if !v.generics.is_empty() {
-						assert!(v.generics.len() == new_generics.len());
-						for (g1, g2) in v.generics.iter().zip(new_generics.iter()) {
-							constraints.push(Constraint::Equal(
-								(g1.clone(), expr.loc),
-								(g2.clone(), expr.loc)
-							));
-						}
-					}
+				constraints.push(mk_eq(&expr, &new_expr));
 
-					let new_var = Expr {
-						val: ExprVal::VarNode(Variable {
-							name: v.name,
-							generics: new_generics,
-						}),
-						loc: expr.loc,
-						r#type: instantiate(
-							&self.substitutions,
-							&instantiation,
-							t
-						),
-					};
-					constraints.push(mk_eq(&new_var, &expr));
-
-					new_var.val
-				} else {
-					constraints.push(mk_eq(
-						&Expr {
-							val: ExprVal::VarNode(v.clone()),
-							r#type: var_t,
-							loc: expr.loc,
-						},
-						&expr,
-					));
-					ExprVal::VarNode(v)
-				}
+				new_expr.val
 			}
 
 			ExprVal::LambdaNode(l) => {
@@ -351,41 +333,31 @@ impl Inference {
 			}
 
 			ExprVal::CallNode(c) => {
-				let args_t =
-					c.args.iter()
-						.map(|a| a.r#type.clone());
-
-				let new_fn_t = Func(
-					args_t.clone().chain(iter::once(expr.r#type.clone()))
-						.collect()
+				let args_t = c.args.clone().into_iter().map(|arg| arg.r#type);
+				let fn_t = Func(
+					args_t.clone().chain(iter::once(expr.r#type.clone())).collect()
 				);
-				let new_fn = self.infer(
+				let func = box self.infer(
 					Expr {
-						val: c.func.val,
+						val: c.func.val.clone(),
 						loc: c.func.loc,
-						r#type: new_fn_t
-					}, constraints
+						r#type: fn_t,
+					},
+					constraints
 				);
+				let args = c.args.into_iter()
+					.zip(args_t)
+					.map(|(arg, t)| self.infer(
+						Expr {
+							val: arg.val,
+							loc: arg.loc,
+							r#type: t,
+						},
+						constraints
+					))
+					.collect();
 
-				let new_args =
-					c.args.iter()
-						.zip(args_t)
-						.map(|(arg, t)| self.infer(
-								Expr {
-									val: arg.val.clone(),
-									loc: arg.loc,
-									r#type: t,
-								}, constraints
-							)
-						)
-						.collect::<VecDeque<Expr>>();
-
-				ExprVal::CallNode(
-					Call {
-						func: box new_fn,
-						args: new_args,
-					}
-				)
+				ExprVal::CallNode(Call { func, args })
 			}
 		};
 
@@ -395,37 +367,37 @@ impl Inference {
 			r#type: expr.r#type,
 		}
 	}
+}
 
-	fn solve_constraints(&mut self, constraints: &[Constraint]) -> HashMap<TypeVarId, Type> {
-		let mut substitutions = HashMap::new();
-		let mut member_map = HashMap::new();
-		for constraint in constraints.iter() {
-			match constraint {
-				Constraint::Equal((t1, l1), (t2, l2)) => {
-					unify(&mut substitutions, &mut self.errors, t1.clone(), t2.clone(), (*l1, *l2));
-				}
+pub fn solve_constraints(constraints: &[Constraint], errors: &mut HashSet<ErrorMessage>) -> HashMap<TypeVarId, Type> {
+	let mut substitutions = HashMap::new();
+	let mut member_map = HashMap::new();
+	for constraint in constraints.iter() {
+		match constraint {
+			Constraint::Equal((t1, l1), (t2, l2)) => {
+				unify(&mut substitutions, errors, t1.clone(), t2.clone(), (*l1, *l2));
+			}
 
-				Constraint::HasMember((t, l1), (m, l2)) => {
-					member_map.entry(t)
-						.or_insert_with(Vec::new)
-						.push((m.clone(), (*l1, *l2)));
-				}
+			Constraint::HasMember((t, l1), (m, l2)) => {
+				member_map.entry(t)
+					.or_insert_with(Vec::new)
+					.push((m.clone(), (*l1, *l2)));
 			}
 		}
-
-		for (t, members_locations) in member_map.into_iter() {
-			// TODO: this is where row polymorphism will be added
-			// TODO: members_positions is thrown away, but it should be
-			// passed into unify() to track where each member constraint
-			// came from. Probably just refactor so that members are a
-			// proper trait.
-			let locs = members_locations.iter().map(|(_, locs)| *locs).next().unwrap();
-			let members = members_locations.into_iter().map(|(types, _)| types).collect();
-			unify(&mut substitutions, &mut self.errors, t.clone(), Struct(members), locs);
-		}
-
-		substitutions
 	}
+
+	for (t, members_locations) in member_map.into_iter() {
+		// TODO: this is where row polymorphism will be added
+		// TODO: members_positions is thrown away, but it should be
+		// passed into unify() to track where each member constraint
+		// came from. Probably just refactor so that members are a
+		// proper trait.
+		let locs = members_locations.iter().map(|(_, locs)| *locs).next().unwrap();
+		let members = members_locations.into_iter().map(|(types, _)| types).collect();
+		unify(&mut substitutions, errors, t.clone(), Struct(members), locs);
+	}
+
+	substitutions
 }
 
 fn mk_eq(e1: &Expr, e2: &Expr) -> Constraint {
@@ -435,78 +407,63 @@ fn mk_eq(e1: &Expr, e2: &Expr) -> Constraint {
 	)
 }
 
-pub fn instantiate(
-	substitutions: &HashMap<TypeVarId, Type>,
-	instantiation: &HashMap<TypeVarId, Type>,
-	t: Type
-) -> Type {
+// Flattens a Forall-quantified type, returning a type with free
+// typevars, and a hashmap of generic types to typevars.
+pub fn instantiate(t: &Type, substitutions: &HashMap<TypeVarId, Type>) -> (Type, HashMap<TypeVarId, Type>) {/*
 	match t {
-		_ if instantiation.is_empty() =>
-			t,
-		TypeVar(v) if substitutions.contains_key(&v) =>
-			instantiate(substitutions, instantiation, substitutions[&v].clone()),
-		TypeVar(v) if instantiation.contains_key(&v) =>
-			instantiation[&v].clone(),
-		Void | Int | Float | Str | Bool | TypeVar(_) =>
-			t,
-		Pointer(box r) =>
-			Pointer(box instantiate(substitutions, instantiation, r)),
-		Func(args_t) =>
-			Func(
-				args_t.into_iter()
-					.map(|t| instantiate(substitutions, instantiation, t))
-					.collect()
-			),
-		Struct(s) =>
-			Struct(
-				s.into_iter()
-					.map(|a|
-						AggregateType {
-							name: a.name,
-							r#type: instantiate(substitutions, instantiation, a.r#type),
-						}
-					)
-					.collect()
-			),
-		Forall(_, box generic_t) => {
-			let instantiated = instantiate(substitutions, instantiation, generic_t);
-			generalize(instantiated)
-		}
-	}
+		TypeVar(v) if substitutions.contains(v) => substitutions[v],
+		Forall(type_vars, generic_type) => {
+			let map = type_vars.iter().map(|tv| (tv, get_type_var())).collect();
+
+*/
+	let instantiation = generics_in_type(substitutions, t).into_iter()
+		.zip(iter::repeat_with(get_type_var))
+		.collect();
+	(substitute(&instantiation, t), instantiation)
 }
 
-fn substitute(substitutions: &HashMap<TypeVarId, Type>, t: Type) -> Type {
+pub fn substitute(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> Type {
 	match t {
-		Void | Int | Float | Str | Bool => t,
+		Void => Void,
+		Int => Int,
+		Float => Float,
+		Str => Str,
+		Bool => Bool,
 		Pointer(box r) =>
 			Pointer(box substitute(substitutions, r)),
 
-		TypeVar(n) if substitutions.contains_key(&n) =>
+		TypeVar(v) if substitutions.contains_key(v) =>
 			substitute(
 				substitutions,
-				substitutions
-					.get(&n)
+				&substitutions
+					.get(v)
 					.unwrap_or_else(|| unreachable!())
-					.clone()
 			),
 
-		TypeVar(_) => t,
+		TypeVar(v) => TypeVar(*v),
 		Func(args_t) => Func(
 			args_t.iter()
-				.map(|t1| substitute(substitutions, t1.clone()))
+				.map(|t1| substitute(substitutions, t1))
 				.collect::<Vec<Type>>(),
 		),
 		Struct(s) => Struct(
 			s.iter().map(|a|
 				AggregateType {
 					name: a.name.clone(),
-					r#type: substitute(substitutions, a.r#type.clone()),
+					r#type: substitute(substitutions, &a.r#type),
 				}
 			).collect()
 		),
-		Forall(_, box generic_t) => {
-			let substituted = substitute(substitutions, generic_t);
-			generalize(substituted)
+		Forall(type_vars, box generic_t) => {
+			let new_generic_t = substitute(substitutions, generic_t);
+			let free = free_in_type(substitutions, &new_generic_t);
+			let new_type_vars = type_vars.iter().copied().filter(|tv| free.contains(tv)).collect::<Vec<_>>();
+
+			if new_type_vars.len() > 0 {
+				Forall(new_type_vars, box new_generic_t)
+			} else {
+				new_generic_t
+			}
 		}
 	}
 }
@@ -553,7 +510,16 @@ fn unify(
 			unify(substitutions, errors, r1, r2, origins),
 
 		(Forall(args1, box generic_t1), Forall(args2, box generic_t2)) => {
-			assert!(args1.len() == args2.len());
+			if args1.len() == args2.len() {
+				errors.insert(ErrorMessage {
+					msg: format!("there was a type mismatch between a `{}` and a `{}`, expected to be the same due to the following lines:",
+						Forall(args1, box generic_t1),
+						Forall(args2, box generic_t2),
+					),
+					origins: vec![ origins.0, origins.1 ],
+				});
+				return;
+			}
 			unify(substitutions, errors, generic_t1, generic_t2, origins);
 		}
 
@@ -566,7 +532,7 @@ fn unify(
 			if occurs_in(substitutions, i, t.clone()) {
 				errors.insert(ErrorMessage {
 					msg: format!("types `{}` and `{}`, expected to be the same due to the following lines, are recursive.",
-						substitute(substitutions, t),
+						substitute(substitutions, &t),
 						TypeVar(i)
 					),
 					origins: vec![ origins.0, origins.1 ],
@@ -580,9 +546,9 @@ fn unify(
 			errors.insert(ErrorMessage {
 				msg: format!("there was a type mismatch between a{} `{}`, and a{} `{}`, expected to be of the same type due to the following lines:",
 					name_of(&t1),
-					substitute(substitutions, t1),
+					substitute(substitutions, &t1),
 					name_of(&t2),
-					substitute(substitutions, t2),
+					substitute(substitutions, &t2),
 				),
 				origins: vec![ origins.0, origins.1 ],
 			});
@@ -656,24 +622,57 @@ pub fn free_in_type(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> HashS
 	}
 }
 
+pub fn generics_in_type(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> HashSet<TypeVarId> {
+	match t {
+		Void | Int | Float | Str | Bool =>
+			HashSet::new(),
+		TypeVar(i) if substitutions.contains_key(i) =>
+			generics_in_type(substitutions, &substitutions[i]),
+		TypeVar(_) =>
+			HashSet::new(),
+		Pointer(box r) =>
+			generics_in_type(substitutions, r),
+		Func(args_t) =>
+			args_t.iter()
+				.map(|arg| generics_in_type(substitutions, arg))
+				.reduce(|mut acc, next| {
+					acc.extend(next.into_iter());
+					acc
+				})
+				.unwrap_or_else(HashSet::new),
+		Struct(s) =>
+			s.iter()
+				.map(|agg| generics_in_type(substitutions, &agg.r#type))
+				.reduce(|mut acc, next| {
+					acc.extend(next.into_iter());
+					acc
+				})
+				.unwrap_or_else(HashSet::new),
+		Forall(type_vars, box generic_t) => {
+			let mut ret = HashSet::from_iter(type_vars.iter().cloned());
+			ret.extend(generics_in_type(substitutions, generic_t).into_iter());
+			ret
+		}
+	}
+}
+
 impl Expr {
 	pub fn annotate(&mut self) -> HashSet<ErrorMessage> {
 		let mut inference = Inference::new();
 		let mut constraints = Vec::new();
 		*self = inference.infer(self.clone(), &mut constraints);
-		inference.substitutions = inference.solve_constraints(&constraints);
+		inference.substitutions = solve_constraints(&constraints, &mut inference.errors);
 
+	// Annotate expressions
 		let typevar_env = Mutex::new(vec![ Vec::new() ]);
 		let error_messages = Mutex::new(inference.errors);
 		let trans_expr = annotate_helper(
 			&mut inference.substitutions,
 			Some(&typevar_env),
-			Some(&error_messages),
-			false,
-			false
+			Some(&error_messages)
 		);
 		let post_trans = |e: &mut Expr| {
-			if let ExprVal::LambdaNode(_) = e.val {
+			if let ExprVal::BlockNode(_) = e.val {
 				typevar_env.lock().unwrap().pop();
 			}
 		};
@@ -688,13 +687,10 @@ impl Expr {
 pub fn annotate_helper<'a>(
 	substitutions: &'a mut HashMap<TypeVarId, Type>,
 	typevar_env: Option<&'a Mutex<Vec<Vec<TypeVarId>>>>,
-	generics_errors: Option<&'a Mutex<HashSet<ErrorMessage>>>,
-	annotate_defs: bool,
-	generalize_types: bool
+	generics_errors: Option<&'a Mutex<HashSet<ErrorMessage>>>
 ) -> impl 'a + Fn(&mut Expr) -> bool {
-	assert_eq!(typevar_env.is_some(), generics_errors.is_some());
 	move |e| {
-		e.r#type = substitute(substitutions, e.r#type.clone());
+		e.r#type = substitute(substitutions, &e.r#type);
 		if let (Forall(generics, _), Some(errors), Some(env))
 			= (&e.r#type, generics_errors.as_ref(), typevar_env.as_ref())
 		{
@@ -709,31 +705,12 @@ pub fn annotate_helper<'a>(
 				}
 			}
 		}
-		match e.val {
+		match &mut e.val {
 			ExprVal::LetNode(Let {
-				var: ref mut v,
-				def: Some(ref mut expr)
+				ref mut declared,
+				def: ref mut expr
 			}) => {
-				if annotate_defs {
-					v.r#type =
-						if generalize_types {
-							generalize(substitute(substitutions, expr.r#type.clone()))
-						} else {
-							substitute(substitutions, expr.r#type.clone())
-						};
-				}
-
-				return annotate_defs;
-			}
-
-			ExprVal::VarNode(ref mut v) => {
-				for generic in &mut v.generics {
-					*generic = substitute(substitutions, generic.clone());
-				}
-			}
-
-			ExprVal::LambdaNode(ref mut lam) => {
-				if let Forall(generics, _) = &e.r#type {
+				if let Forall(generics, _) = &expr.r#type {
 					if let Some(env) = &typevar_env {
 						let mut env = env.lock().unwrap();
 						for generic in generics {
@@ -742,12 +719,36 @@ pub fn annotate_helper<'a>(
 					}
 				}
 
+				declared.infer_as(
+					generalize(substitute(
+						substitutions,
+						&expr.r#type
+					)),
+					expr.loc,
+					&mut HashSet::new()
+				);
+			}
+
+			ExprVal::BlockNode(_) => {
+				if let Some(env) = &typevar_env {
+					let mut env = env.lock().unwrap();
+					env.push(Vec::new());
+				}
+			}
+
+			ExprVal::VarNode(ref mut v) => {
+				for (_, generic_t) in &mut v.generics {
+					*generic_t = substitute(substitutions, generic_t);
+				}
+			}
+
+			ExprVal::LambdaNode(ref mut lam) => {
 				lam.captured = lam.captured.drain().map(|mut captured| {
-					captured.r#type = substitute(substitutions, captured.r#type.clone());
+					captured.r#type = generalize(substitute(substitutions, &captured.r#type));
 					captured
 				}).collect();
 				for arg in &mut lam.args {
-					arg.r#type = substitute(substitutions, arg.r#type.clone());
+					arg.r#type = substitute(substitutions, &arg.r#type);
 				}
 			}
 

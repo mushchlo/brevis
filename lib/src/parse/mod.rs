@@ -3,17 +3,21 @@ pub mod ast;
 use crate::{
 	util::Env,
 	parse::ast::{
-		*,
+		Expr,
+		ExprVal,
+		Literal::*,
+		Pattern,
+	},
+	types::{
+		Type,
 		Type::*,
-		ExprVal::*,
-		Literal::*
+		AggregateType,
 	},
 	lex::{
 		TokenStream,
 		cradle::{SourcePos, SourceLoc},
 		tok::{
 			Token,
-			TokenLiteral::*,
 			TokenValue,
 			TokenValue::*,
 			KeyWord,
@@ -106,14 +110,14 @@ impl TokenStream {
 		Expr {
 			val: ExprVal::BlockNode(parsed),
 			loc: SourceLoc::new(SourcePos::new(), end_loc),
-			r#type: Void,
+			r#type: get_type_var(),
 		}
 	}
 
 	fn parse_node(&mut self) -> Expr {
 		let atom = self.parse_atom();
 		self.maybe_call(|s| match &atom.val {
-			LetNode(_) => atom.clone(),
+			ExprVal::LetNode(_) => atom.clone(),
 			_ => s.maybe_binary(atom.clone(), -1),
 		})
 	}
@@ -140,18 +144,20 @@ impl TokenStream {
 	}
 
 	fn maybe_binary(&mut self, left_expr: Expr, prev_prec: i8) -> Expr {
+		use self::ExprVal::BinaryNode;
+
 		if let Some(op_tok) = self.peek() {
 			match op_tok.val {
 				BinaryOp(InfixFn) => {
 					self.skip_token(BinaryOp(InfixFn));
 				// TODO: MASSIVE BUG HERE. INFIX FNs CANNOT CONTAIN BINARY OP??? AWFUL IMPL
-					let e = self.maybe_call(|s| s.parse_atom());
+					let e = self.parse_atom();
 					let f = new_expr(e.loc, e.val);
 					self.skip_token(BinaryOp(InfixFn));
 					let right_expr = self.parse_expr();
 					let parsed = new_expr(
 						left_expr.loc.join(right_expr.loc),
-						CallNode(Call {
+						ExprVal::CallNode(ast::Call {
 							func: box f,
 							args: VecDeque::from([ left_expr, right_expr ]),
 						})
@@ -179,12 +185,10 @@ impl TokenStream {
 												s.skip_token(Ident(member.clone()));
 												new_expr(
 													operand_tok.loc,
-													VarNode(
-														Variable {
-															name: member.clone(),
-															generics: vec![],
-														}
-													)
+													ExprVal::VarNode(ast::Variable {
+														name: member.clone(),
+														generics: HashMap::new(),
+													})
 												)
 											}
 
@@ -201,15 +205,17 @@ impl TokenStream {
 
 						let parsed = new_expr(
 							left_expr.loc.join(right_expr.loc),
-							match right_expr.val.clone() {
-								CallNode(c) if curr_op == Member => {
-									CallNode(Call {
-										args: c.args,
+							match &right_expr.val {
+							// TODO: This is a hack to fix call parsing being messed up in the case
+							// of a member access. Fix this on a higher level.
+								ExprVal::CallNode(c) if curr_op == Member => {
+									ExprVal::CallNode(ast::Call {
+										args: c.args.clone(),
 										func: box new_expr(
 											SourceLoc::new(left_expr.loc.start, right_expr.loc.start.index),
-											BinaryNode(Binary {
+											BinaryNode(ast::Binary {
 												left: box left_expr,
-												right: c.func,
+												right: c.func.clone(),
 												op: curr_op,
 												op_loc: op_tok.loc,
 											})
@@ -217,7 +223,7 @@ impl TokenStream {
 									})
 								}
 								_ =>
-									BinaryNode(Binary {
+									BinaryNode(ast::Binary {
 										left: Box::new(left_expr),
 										right: Box::new(right_expr),
 										op: curr_op,
@@ -264,15 +270,15 @@ impl TokenStream {
 				},
 				Literal(l) => {
 					s.skip_token(Literal(l.clone()));
-					new_expr(loc, LiteralNode(AtomicLiteral(l)))
+					new_expr(loc, ExprVal::LiteralNode(AtomicLiteral(l)))
 				}
 				Ident(_) => {
 					let id = s.parse_id();
 					Expr {
-						val: VarNode(
-							Variable {
+						val: ExprVal::VarNode(
+							ast::Variable {
 								name: id.clone(),
-								generics: vec![],
+								generics: HashMap::new(),
 							}
 						),
 						loc,
@@ -286,28 +292,24 @@ impl TokenStream {
 	}
 
 	fn parse_let(&mut self) -> Expr {
+		var_types!().new_stack();
 		let start_loc = self.peek().unwrap().loc;
 		self.skip_token(KeyWord(KeyWord::Let));
-		let parsed_var = self.declare_var();
+		let declared = self.parse_pattern();
 
-		let (parsed_def, end_loc) = if let Some(Token {
-			val: AssignOp(Eq),
-			..
-		}) = self.peek()
-		{
-			self.skip_token(AssignOp(Eq));
-			let def = self.parse_expr();
-			let def_loc = def.loc;
-			(Some(box def), def_loc)
-		} else {
-			(None, self.peek().unwrap().loc)
-		};
+		self.skip_token(AssignOp(Eq));
+		let def = box self.parse_expr();
+		var_types!().pop_stack();
+		for assignee in declared.assignees() {
+			self.declare(assignee);
+		}
+		let end_loc = def.loc;
 
 		Expr {
 			val:
-				LetNode(Let {
-					var: parsed_var,
-					def: parsed_def,
+				ExprVal::LetNode(ast::Let {
+					declared,
+					def,
 				}),
 			r#type: Type::Void,
 			loc: start_loc.join(end_loc),
@@ -353,7 +355,7 @@ impl TokenStream {
 		(parsed, loc)
 	}
 
-	fn declare_var(&mut self) -> Parameter {
+	fn parse_parameter(&mut self) -> ast::Parameter {
 		let mutable = match self.peek() {
 			Some(t) if t.val == KeyWord(KeyWord::Mut) => {
 				self.skip_token(KeyWord(KeyWord::Mut));
@@ -362,18 +364,18 @@ impl TokenStream {
 			_ => false,
 		};
 		if let Some(Token {
-			val: Ident(id),
+			val: Ident(name),
 			loc: name_loc,
 		}) = self.next()
 		{
-			if var_types!().find(&id).is_some() {
+			if var_types!().find(&name).is_some() {
 				// making sure declared var does not already exist
 				panic!(
 					"variable {} was already declared, but was declared again at {}",
-					id, name_loc.start
+					name, name_loc.start
 				);
 			}
-			let (var_type, type_loc) = match self.peek() {
+			let (r#type, type_loc) = match self.peek() {
 				Some(t) if t.val == Punc(':') => {
 					let mut type_loc = t.loc;
 					self.skip_token(Punc(':'));
@@ -383,19 +385,26 @@ impl TokenStream {
 				}
 				_ => (get_type_var(), None)
 			};
-			let var = Parameter {
-				name: id,
+			ast::Parameter {
+				name,
+				r#type,
 				mutable,
-				r#type: var_type,
 				name_loc,
 				type_loc,
-			};
-
-			var_types!().insert_in_env(var.name.clone(), var.r#type.clone());
-			var
+			}
 		} else {
 			panic!("expected identifier for declared variable, found EOF")
 		}
+	}
+
+	fn declare(&mut self, declared: &ast::Parameter) {
+		var_types!().insert_in_env(declared.name.clone(), declared.r#type.clone());
+	}
+
+	fn declare_var(&mut self) -> ast::Parameter {
+		let declared = self.parse_parameter();
+		self.declare(&declared);
+		declared
 	}
 
 	fn parse_id(&mut self) -> String {
@@ -419,7 +428,7 @@ impl TokenStream {
 	fn parse_if(&mut self) -> Expr {
 		let begin_pos = self.peek().unwrap().loc.start;
 		self.skip_token(KeyWord(KeyWord::If));
-		let mut parsed = IfElse {
+		let mut parsed = ast::IfElse {
 			cond: Box::new(self.parse_expr()),
 			then: Box::new(self.parse_expr()),
 			r#else: None,
@@ -436,7 +445,10 @@ impl TokenStream {
 			parsed.r#else = Some(Box::new(self.parse_expr()));
 		}
 
-		new_expr(SourceLoc::new(begin_pos, end_pos), IfNode(parsed))
+		new_expr(
+			SourceLoc::new(begin_pos, end_pos),
+			ExprVal::IfNode(parsed)
+		)
 	}
 
 	fn parse_block(&mut self) -> Expr {
@@ -451,7 +463,7 @@ impl TokenStream {
 			1 => parsed.front().unwrap().clone(),
 			_ => new_expr(
 				block_loc,
-				BlockNode(parsed)
+				ExprVal::BlockNode(parsed)
 			),
 		}
 	}
@@ -470,7 +482,7 @@ impl TokenStream {
 			s.skip_token(Punc(':'));
 			let val = s.parse_expr();
 
-			Aggregate {
+			ast::Aggregate {
 				name,
 				val
 			}
@@ -478,7 +490,7 @@ impl TokenStream {
 
 		new_expr(
 			struct_loc,
-			LiteralNode(
+			ExprVal::LiteralNode(
 				StructLiteral(struct_args.into())
 			)
 		)
@@ -506,7 +518,7 @@ impl TokenStream {
 				.chain(std::iter::once(return_type))
 				.collect()
 		);
-		let lambda_val = Lambda {
+		let lambda_val = ast::Lambda {
 			args,
 			captured: HashSet::new(),
 			body: Box::new(self.parse_expr()),
@@ -516,7 +528,7 @@ impl TokenStream {
 
 		Expr {
 			loc: begin_loc.join(lambda_val.body.loc),
-			val: LambdaNode(lambda_val),
+			val: ExprVal::LambdaNode(lambda_val),
 			r#type: fn_type,
 		}
 	}
@@ -529,13 +541,13 @@ impl TokenStream {
 			|s| s.parse_expr()
 		);
 		let loc = f.loc.join(args_loc);
-		let call_val = Call {
+		let call_val = ast::Call {
 			func: Box::new(f),
 			args,
 		};
 		new_expr(
 			loc,
-			CallNode(call_val)
+			ExprVal::CallNode(call_val)
 		)
 	}
 
@@ -543,51 +555,15 @@ impl TokenStream {
 		let op_loc = self.peek().unwrap().loc;
 		self.skip_token(UnaryOp(op));
 
-	// TODO: Refactor so that this doesn't cancel some unary operators,
-	// that should be left to the optimizer (which needs written)
-		if let Some(tok) = self.peek() {
-			match tok.val {
-				Literal(l) => {
-					self.skip_token(Literal(l.clone()));
-					if op == Neg {
-						return new_expr(
-							op_loc.join(tok.loc),
-							LiteralNode(match l {
-								IntLit(i) => AtomicLiteral(IntLit(-i)),
-								FltLit(f) => AtomicLiteral(FltLit(-f)),
-								_ => panic!(
-									"Usage of unary minus operator `-` on a non-numeric literal at {}",
-									tok.loc.start
-								),
-							})
-						);
-					} else if op == Not {
-						return new_expr(
-							op_loc.join(tok.loc),
-							LiteralNode(match l {
-								BoolLit(b) => AtomicLiteral(BoolLit(!b)),
-								_ => panic!(
-									"Usage of not operator `!` on a non-boolean value at {}",
-									tok.loc.start
-								),
-							})
-						);
-					}
-				}
-				_ => {
-					let expr = box self.parse_atom();
-					return new_expr(
-						op_loc.join(expr.loc),
-						UnaryNode(Unary {
-							op,
-							op_loc,
-							expr,
-						})
-					)
-				}
-			}
-		}
-		panic!("Operator {:?} is not a unary", op);
+		let expr = box self.parse_atom();
+		new_expr(
+			op_loc.join(expr.loc),
+			ExprVal::UnaryNode(ast::Unary {
+				op,
+				op_loc,
+				expr,
+			})
+		)
 	}
 
 	fn parse_type(&mut self) -> Type {
@@ -676,6 +652,55 @@ impl TokenStream {
 			},
 
 			None => panic!("expected a type, received EOF"),
+		}
+	}
+
+	pub fn parse_pattern(&mut self) -> Pattern {
+		let tok = self.peek().unwrap_or_else(|| panic!("Expected pattern, found EOF"));
+		match tok.val {
+		// Empty pattern
+			Ident(s) if &s == "_" => {
+				self.next();
+				Pattern::Empty(tok.loc)
+			},
+
+		// Literal pattern
+			Literal(lit) => {
+				self.next();
+				Pattern::Literal(lit)
+			}
+
+		// Either variable match or function pattern
+			Ident(_) => {
+				let var = self.declare_var();
+				if self.peek().map(|t| t.val) == Some(Punc('(')) {
+					let args = Vec::from(
+						self.delimited(Punc('('), Punc(')'), Punc(','), |s|
+							s.declare_var()
+						).0
+					);
+					Pattern::Func { func: var, args }
+				} else {
+					Pattern::Assignee(var)
+				}
+			}
+
+		// Anonymous structure matching
+			Punc('[') =>
+				Pattern::Struct(Vec::from(
+					self.delimited(Punc('['), Punc(']'), Punc(','), |s| {
+						let field = s.parse_parameter();
+						if Some(Punc(':')) == s.peek().map(|t| t.val) {
+							s.next();
+							(field.name, s.parse_pattern())
+						} else {
+							s.declare(&field);
+							(field.name.clone(), Pattern::Assignee(field))
+						}
+					}).0
+				)),
+
+			not_pattern => panic!("Expected a pattern, found {:#?}", not_pattern)
 		}
 	}
 }

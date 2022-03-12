@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::parse::ast::{
+use crate::types::{
 	Type,
 	Type::*,
 };

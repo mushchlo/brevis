@@ -1,15 +1,30 @@
 use std::collections::{
 	VecDeque,
 	HashSet,
+	HashMap,
 };
 
-use crate::lex::{
-	tok::{
-		TokenLiteral,
-		OpID,
-		UOpID,
+use crate::{
+	error::ErrorMessage,
+	types::{
+		Type,
+		TypeVarId,
+		AggregateType,
+		Constraint,
+		solve_constraints,
+		substitute,
+		generalize
 	},
-	cradle::SourceLoc,
+	parse::get_type_var,
+	lex::{
+		tok::{
+			TokenLiteral,
+			LiteralVal,
+			OpID,
+			UOpID,
+		},
+		cradle::SourceLoc,
+	},
 };
 
 #[derive(Clone, Debug)]
@@ -49,7 +64,7 @@ pub struct Aggregate {
 #[derive(Clone, Debug)]
 pub struct Variable {
 	pub name: String,
-	pub generics: Vec<Type>,
+	pub generics: HashMap<TypeVarId, Type>,
 }
 
 
@@ -101,36 +116,144 @@ pub struct Call {
 
 #[derive(Clone, Debug)]
 pub struct Let {
-	pub var: Parameter,
-	pub def: Option<Box<Expr>>,
+	pub declared: Pattern,
+	pub def: Box<Expr>,
 }
 
-pub type TypeVarId = usize;
-
-#[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash, PartialOrd, Ord)]
-pub enum Type {
-	Void,
-	Int,
-	Float,
-	Str,
-	Bool,
-
-	// Union(Vec<Aggregate>),
-	Struct(Vec<AggregateType>),
-	Pointer(Box<Type>),
-// The argument types, ending with the return type
-	Func(Vec<Type>),
-
-// A type generic over these arguments
-	Forall(Vec<TypeVarId>, Box<Type>),
-
-	TypeVar(TypeVarId),
+#[derive(Clone, Debug)]
+pub enum Pattern {
+	Empty(SourceLoc),
+	Assignee(Parameter),
+	Func {
+		func: Parameter,
+		args: Vec<Parameter>,
+	},
+	Struct(Vec<(String, Pattern)>),
+	Literal(TokenLiteral),
 }
 
-#[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash, PartialOrd, Ord)]
-pub struct AggregateType {
-	pub name: String,
-	pub r#type: Type,
+impl Pattern {
+	pub fn assignees(&self) -> Vec<&Parameter> {
+		use self::Pattern::*;
+		match self {
+			Assignee(p) => vec![p],
+			Func { func, .. } => vec![func],
+			Struct(s) => {
+				s.iter()
+					.map(|(_, p)| p.assignees())
+					.reduce(|mut acc, mut next| {
+						acc.append(&mut next);
+						acc
+					})
+					.unwrap_or_else(Vec::new)
+			}
+			Literal(_) | Empty(_) => vec![],
+		}
+	}
+
+	pub fn assert_assignee(&self) -> &Parameter {
+		if let Pattern::Assignee(p) = self {
+			p
+		} else {
+			panic!("pattern {:#?} was asserted to be an assignee, but wasn't", self)
+		}
+	}
+
+	pub fn generalize(&mut self) {
+		use self::Pattern::*;
+		match self {
+			Empty(_) | Literal(_) => {},
+
+			Assignee(p) => {
+				p.r#type = generalize(p.r#type.clone());
+			}
+
+			Func { func, args } => {
+				func.r#type = generalize(func.r#type.clone());
+				for arg in args {
+					arg.r#type = generalize(arg.r#type.clone());
+				}
+			}
+
+			Struct(s) => {
+				for (_, pattern) in s {
+					pattern.generalize();
+				}
+			}
+		}
+	}
+
+	pub fn infer_as(&mut self, t: Type, loc: SourceLoc, errors: &mut HashSet<ErrorMessage>) {
+		let constraints = [self.constrain_as(t, loc)];
+		let substitutions = solve_constraints(&constraints, errors);
+		self.substitute_with(&substitutions);
+	}
+
+	pub fn constrain_as(&self, t: Type, loc: SourceLoc) -> Constraint {
+		Constraint::Equal(
+			(self.r#type(), self.loc()),
+			(t, loc)
+		)
+	}
+
+	fn substitute_with(&mut self, substitutions: &HashMap<TypeVarId, Type>) {
+		use self::Pattern::*;
+		match self {
+			Empty(_) | Literal(_) => {}
+			Assignee(p) => {
+				p.r#type = substitute(substitutions, &p.r#type);
+			}
+			Func { func, args } => {
+				func.r#type = substitute(substitutions, &func.r#type);
+				for arg in args {
+					arg.r#type = substitute(substitutions, &arg.r#type);
+				}
+			}
+			Struct(s) => {
+				for (_, pattern) in s {
+					pattern.substitute_with(substitutions)
+				}
+			}
+		}
+	}
+
+	fn r#type(&self) -> Type {
+		use self::Pattern::*;
+		match self {
+			Assignee(p) => p.r#type.clone(),
+			Func { .. } =>
+				get_type_var(),
+			Struct(s) =>
+				Type::Struct(s.iter().map(|(name, p)|
+					AggregateType {
+						name: name.clone(),
+						r#type: p.r#type()
+					}
+				).collect()),
+			Literal(lit) =>
+				match lit.val {
+					LiteralVal::StrLit(_) => Type::Str,
+					LiteralVal::IntLit(_) => Type::Int,
+					LiteralVal::FltLit(_) => Type::Float,
+					LiteralVal::BoolLit(_) => Type::Bool,
+				},
+			Empty(_) => get_type_var(),
+		}
+	}
+
+	fn loc(&self) -> SourceLoc {
+		use self::Pattern::*;
+		match self {
+			Assignee(p) => p.name_loc,
+			Func { func, args } =>
+				func.name_loc.join(args.last().map(|p| p.name_loc).unwrap_or_else(SourceLoc::nonexistent)),
+			Struct(s) =>
+				s.first().map(|(_, p)| p.loc()).unwrap()
+					.join(s.last().map(|(_, p)| p.loc()).unwrap_or_else(SourceLoc::nonexistent)),
+			Literal(lit) => lit.loc,
+			Empty(loc) => *loc,
+		}
+	}
 }
 
 impl Expr {
@@ -172,9 +295,7 @@ impl Expr {
 						}
 
 						LetNode(ref mut l) => {
-							if let Some(box def) = &mut l.def {
-								call_stack.push((def, false));
-							}
+							call_stack.push((&mut *l.def, false));
 						}
 
 						LambdaNode(ref mut lam) => {

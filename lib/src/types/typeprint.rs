@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parse::ast::{
+use crate::types::{
 	Type,
 	Type::*,
 	TypeVarId,
@@ -35,13 +35,12 @@ fn display_type(t: &Type, generic_names: &mut HashMap<TypeVarId, char>) -> Strin
 		Float => "float".to_string(),
 		Str => "string".to_string(),
 		Bool => "bool".to_string(),
-		Forall(args, sub_t) if args.is_empty() => display_type(sub_t, generic_names),
 		Forall(args, sub_t) =>
 			format!("forall {} => {}",
 				args.iter()
 					.map(|&tv| display_type(&TypeVar(tv), generic_names))
 					.reduce(|acc, next| acc + ", " + &next)
-					.unwrap(),
+					.unwrap_or_else(|| "".to_string()),
 				display_type(sub_t, generic_names)
 			),
 		TypeVar(v) => {

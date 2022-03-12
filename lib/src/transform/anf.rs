@@ -1,10 +1,15 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::HashMap;
 
 use crate::{
 	parse::ast::{
-		*,
-		ExprVal::*,
+		self,
+		Expr,
+		Pattern,
+	},
+	types::{
+		Type,
 	},
 	lex::cradle::SourceLoc,
 };
@@ -17,6 +22,7 @@ fn unique_name() -> String {
 
 /// Reorders an expression in administrative normal form
 pub fn anfify(e: Expr) -> Expr {
+	use parse::ast::ExprVal::*;
 	Expr {
 		r#type: e.r#type.clone(),
 		loc: e.loc,
@@ -26,17 +32,12 @@ pub fn anfify(e: Expr) -> Expr {
 				VarNode(v) =>
 					VarNode(v),
 				LetNode(l) =>
-					LetNode(Let {
-						var: l.var.clone(),
-						def:
-							if let Some(box def) = l.def {
-								Some(box anfify(def))
-							} else {
-								None
-							}
+					LetNode(ast::Let {
+						declared: l.declared.clone(),
+						def: box anfify(*l.def)
 					}),
 				IfNode(i) =>
-					IfNode(IfElse {
+					IfNode(ast::IfElse {
 						cond: box anfify(*i.cond),
 						then: box anfify(*i.then),
 						r#else: i.r#else.map(|box e| box anfify(e)),
@@ -46,19 +47,19 @@ pub fn anfify(e: Expr) -> Expr {
 						b.iter().map(|line| anfify(line.clone())).collect()
 					),
 				LambdaNode(l) =>
-					LambdaNode(Lambda {
+					LambdaNode(ast::Lambda {
 						args: l.args,
 						captured: l.captured,
 						body: Box::new(anfify(*l.body))
 					}),
 				UnaryNode(u) =>
-					UnaryNode(Unary {
+					UnaryNode(ast::Unary {
 						op: u.op,
 						op_loc: u.op_loc,
 						expr: Box::new(anfify(*u.expr))
 					}),
 				BinaryNode(b) =>
-					BinaryNode(Binary {
+					BinaryNode(ast::Binary {
 						op: b.op,
 						op_loc: b.op_loc,
 						left: box anfify(*b.left),
@@ -77,17 +78,16 @@ pub fn anfify(e: Expr) -> Expr {
 								block.push_back(
 									Expr {
 										val:
-											LetNode(Let {
-												var:
-													Parameter {
-														name: name.clone(),
-														mutable: false,
+											LetNode(ast::Let {
+												declared: Pattern::Assignee(ast::Parameter {
+													name: name.clone(),
+													mutable: false,
 													// Zero values, as this variable doesn't exist in the source code.
-														name_loc: SourceLoc::nonexistent(),
-														type_loc: None,
-														r#type: arg.r#type.clone()
-													},
-												def: Some(box anfify(arg)),
+													name_loc: SourceLoc::nonexistent(),
+													type_loc: None,
+													r#type: arg.r#type.clone()
+												}),
+												def: box anfify(arg),
 											}),
 										r#type: Type::Void,
 										loc: SourceLoc::nonexistent(),
@@ -95,9 +95,9 @@ pub fn anfify(e: Expr) -> Expr {
 								);
 								Expr {
 									val: VarNode(
-										Variable {
+										ast::Variable {
 											name,
-											generics: vec![],
+											generics: HashMap::new(),
 										}
 									),
 									loc: SourceLoc::nonexistent(),
@@ -108,7 +108,7 @@ pub fn anfify(e: Expr) -> Expr {
 					}
 					block.push_back(
 						Expr {
-							val: CallNode(Call {
+							val: CallNode(ast::Call {
 								args: trivial_args,
 								func: Box::new(anfify(*c.func))
 							}),

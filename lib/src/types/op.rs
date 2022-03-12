@@ -1,5 +1,10 @@
 use crate::{
-	types::unify::Constraint,
+	types::{
+		Type,
+		Type::*,
+		AggregateType,
+		unify::Constraint,
+	},
 	lex::tok::{
 		OpID::*,
 		UOpID::*,
@@ -11,9 +16,6 @@ use crate::{
 			Binary,
 			Expr,
 			ExprVal,
-			Type,
-			Type::*,
-			AggregateType,
 		},
 	},
 };

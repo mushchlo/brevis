@@ -18,7 +18,13 @@ pub enum TokenValue {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum TokenLiteral {
+pub struct TokenLiteral {
+	pub val: LiteralVal,
+	pub loc: SourceLoc,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum LiteralVal {
 	StrLit(String),
 	IntLit(i64),
 	FltLit(f64),

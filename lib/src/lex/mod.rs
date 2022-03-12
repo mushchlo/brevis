@@ -10,7 +10,7 @@ use crate::lex::tok::{
 	TokenValue,
 	TokenValue::*,
 	TokenLiteral,
-	TokenLiteral::*,
+	LiteralVal::*,
 	KeyWord,
 	OpID::*,
 	UOpID::*,
@@ -64,7 +64,7 @@ impl CharsPos<'_> {
 		panic!("expected `{}` character at {}", expected, self.pos)
 	}
 
-	fn read_while<F>(&mut self, first_char: Option<char>, mut cond: F) -> String
+	fn read_while<F>(&mut self, first_char: Option<char>, mut cond: F) -> (String, SourceLoc)
 	where
 		F: FnMut(&char) -> bool, // sometimes callers need to retain state between closure calls
 	{
@@ -72,15 +72,20 @@ impl CharsPos<'_> {
 			Some(c) => String::from(c),
 			None => String::new()
 		};
+		let start_pos = self.peek()
+			.map(|(pos, _)| pos)
+			.unwrap_or_else(SourcePos::new);
+		let mut loc = SourceLoc::new(start_pos, start_pos.index);
 		loop {
 			match self.peek() {
-				Some((_, c)) if cond(c) => {
+				Some((end_pos, c)) if cond(c) => {
 					acc.push(*c);
+					loc.end = end_pos.index;
 					self.next();
 				}
 
 				_ => {
-					break acc;
+					break (acc, loc);
 				}
 			}
 		}
@@ -92,7 +97,7 @@ impl CharsPos<'_> {
 		F: FnMut(&char) -> bool,
 	{
 		let begin = self.pos;
-		self.read_while(None, cond).parse::<T>().unwrap_or_else(|_| {
+		self.read_while(None, cond).0.parse::<T>().unwrap_or_else(|_| {
 			panic!(
 				":{}:{} malformed {} literal",
 				begin.row,
@@ -106,11 +111,17 @@ impl CharsPos<'_> {
 		let mut escaped = false;
 
 		let strlit = self.make_token(|s| {
-			TokenValue::Literal(TokenLiteral::StrLit(s.read_lit(|&ch| {
+			let start_pos = s.peek().unwrap().0;
+			let val = StrLit(s.read_lit(|&ch| {
 				let cont = ch != '"' || escaped;
 				escaped = !escaped && ch == '\\';
 				cont
-			})))
+			}));
+			let end_pos = s.peek().unwrap().0;
+			TokenValue::Literal(TokenLiteral {
+				val,
+				loc: SourceLoc::new(start_pos, end_pos.index),
+			})
 		});
 		self.skip_char('"');
 		strlit
@@ -120,7 +131,7 @@ impl CharsPos<'_> {
 		let mut is_flt = false;
 		let mut last_e = false;
 		let startpos = self.pos;
-		let to_num_lit = self.read_while(Some(first_digit), |&ch| {
+		let (to_num_lit, loc) = self.read_while(Some(first_digit), |&ch| {
 			let cont = if is_flt_char(ch) || (last_e && ch == '-') {
 				is_flt = true;
 				true
@@ -134,21 +145,26 @@ impl CharsPos<'_> {
 		// because tokenizing either a floating literal or an integer literal requires
 		// knowing which it is before converting, a call can't be easily made to make_token
 
-		let num_lit = TokenValue::Literal(if is_flt {
-			TokenLiteral::FltLit(to_num_lit.parse::<f64>().unwrap_or_else(|_| {
-				panic!(
-					":{}:{} malformed floating-point literal `{}`",
-					startpos.row, startpos.col, to_num_lit
-				)
-			}))
-		} else {
-			TokenLiteral::IntLit(to_num_lit.parse::<i64>().unwrap_or_else(|_| {
-				panic!(
-					":{}:{} malformed integer literal",
-					startpos.row, startpos.col
-				)
-			}))
-		});
+		let num_lit = TokenValue::Literal(
+			TokenLiteral {
+				val: if is_flt {
+					FltLit(to_num_lit.parse::<f64>().unwrap_or_else(|_| {
+						panic!(
+							":{}:{} malformed floating-point literal `{}`",
+							startpos.row, startpos.col, to_num_lit
+						)
+					}))
+				} else {
+					IntLit(to_num_lit.parse::<i64>().unwrap_or_else(|_| {
+						panic!(
+							":{}:{} malformed integer literal",
+							startpos.row, startpos.col
+						)
+					}))
+				},
+				loc,
+			}
+		);
 
 		Token {
 			val: num_lit,
@@ -190,14 +206,15 @@ impl CharsPos<'_> {
 
 	fn get_op(&mut self, first_char: char, context: Option<&TokenValue>) -> Token {
 		self.make_token(|s|
-			map_op(s.read_while(Some(first_char), |&c| is_op_char(c)), context)
+			map_op(s.read_while(Some(first_char), |&c| is_op_char(c)).0, context)
 		)
 	}
 
 	fn get_id(&mut self, first_char: char) -> Token {
-		self.make_token(|s|
-			map_keyword(s.read_while(Some(first_char), |&c| !is_special_char(c)))
-		)
+		self.make_token(|s| {
+			let (s, loc) = s.read_while(Some(first_char), |&c| !is_special_char(c));
+			map_keyword(s, loc)
+		})
 	}
 
 	fn make_token<F>(&mut self, mut f: F) -> Token
@@ -213,10 +230,16 @@ impl CharsPos<'_> {
 	}
 }
 
-fn map_keyword(kwstr: String) -> TokenValue {
+fn map_keyword(kwstr: String, loc: SourceLoc) -> TokenValue {
 	match kwstr.as_str() {
-		"true" => Literal(BoolLit(true)),
-		"false" => Literal(BoolLit(false)),
+		"true" => Literal(TokenLiteral {
+			val: BoolLit(true),
+			loc,
+		}),
+		"false" => Literal(TokenLiteral {
+			val: BoolLit(false),
+			loc,
+		}),
 		"and" => BinaryOp(And),
 		"or" => BinaryOp(Or),
 		"xor" => BinaryOp(Xor),

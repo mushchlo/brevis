@@ -7,15 +7,20 @@ use std::iter;
 
 use crate::{
 	parse::ast::{
-		*,
-		ExprVal::*,
+		Expr,
+		ExprVal,
+		Lambda,
+		Literal,
+		Literal::*,
+	},
+	types::{
 		Type,
 		Type::*,
-		Literal::*,
+		AggregateType,
 	},
 	lex::tok::{
 		TokenLiteral,
-		TokenLiteral::*,
+		LiteralVal::*,
 		OpID,
 		OpID::*,
 		UOpID::*,
@@ -58,37 +63,30 @@ fn lambda_name() -> String {
 
 pub fn compile_js(e: Expr) -> String {
 	format!("({})", match e.val {
-		LambdaNode(l) =>
+		ExprVal::LambdaNode(l) =>
 			format!("(function ({}) {{ return {}; }})",
 				l.args.iter()
-					.map(|v| mk_id(v.name.clone()))
+					.map(|v| mk_id(&v.name))
 					.reduce(|acc, next| acc + ", " + &next)
 					.unwrap_or_else(|| "".to_string()),
 				compile_js(*l.body)
 			),
-		LiteralNode(AtomicLiteral(atom)) =>
+		ExprVal::LiteralNode(AtomicLiteral(atom)) =>
 			compile_atomic(atom),
-		LiteralNode(StructLiteral(_s)) =>
+		ExprVal::LiteralNode(StructLiteral(_s)) =>
 			panic!("structs not yet implemented for js backend"),
-		LetNode(l) =>
-			format!("({} = {})",
-				mk_id(l.var.name),
-				if let Some(box def) = l.def {
-					compile_js(def)
-				} else {
-					"false".to_string()
-				}
-			),
-		VarNode(v) =>
-			mk_id(v.name),
-		BlockNode(b) =>
+		ExprVal::LetNode(l) =>
+			format!("({} = {})", mk_id(&l.declared.assert_assignee().name), compile_js(*l.def)),
+		ExprVal::VarNode(v) =>
+			mk_id(&v.name),
+		ExprVal::BlockNode(b) =>
 			format!("({})",
 				b.iter()
 					.map(|line| compile_js(line.clone()))
 					.reduce(|acc, next| acc + "," + &next)
 					.unwrap_or_else(|| "".to_string()),
 			),
-		IfNode(ifelse) =>
+		ExprVal::IfNode(ifelse) =>
 			format!("({}) ? ({}) : ({})",
 				compile_js(*ifelse.cond),
 				compile_js(*ifelse.then),
@@ -98,7 +96,7 @@ pub fn compile_js(e: Expr) -> String {
 					"false".to_string()
 				}
 			),
-		UnaryNode(u) =>
+		ExprVal::UnaryNode(u) =>
 			format!("{}({})",
 				match u.op {
 					Not => "!",
@@ -107,7 +105,7 @@ pub fn compile_js(e: Expr) -> String {
 				},
 				compile_js(*u.expr)
 			),
-		BinaryNode(b) =>
+		ExprVal::BinaryNode(b) =>
 			if b.op == Xor {
 				format!("!({}) != !({})",
 					compile_js(*b.left),
@@ -122,7 +120,7 @@ pub fn compile_js(e: Expr) -> String {
 					compile_js(*b.right)
 				)
 			},
-		CallNode(c) =>
+		ExprVal::CallNode(c) =>
 			format!("{}({})",
 				compile_js(*c.func),
 				c.args.iter()
@@ -196,13 +194,13 @@ impl Compilation {
 
 	pub fn compile(&mut self, e: Expr) -> String {
 		match e.val {
-			LiteralNode(lit) =>
+			ExprVal::LiteralNode(lit) =>
 				self.compile_literal(lit),
 
-			VarNode(v) if core_vals.contains_key(&v.name) => v.name,
-			VarNode(v) => mk_id(v.name),
+			ExprVal::VarNode(v) if core_vals.contains_key(&v.name) => v.name,
+			ExprVal::VarNode(v) => mk_id(&v.name),
 
-			BlockNode(b) =>
+			ExprVal::BlockNode(b) =>
 				format!("({})",
 					b.iter()
 						.filter_map(|l| {
@@ -219,10 +217,10 @@ impl Compilation {
 						.unwrap()
 				),
 
-			LambdaNode(l) =>
+			ExprVal::LambdaNode(l) =>
 				self.compile_lambda(l, None),
 
-			IfNode(ifelse) =>
+			ExprVal::IfNode(ifelse) =>
 				format!("({}) ? ({}) : ({})",
 						self.compile(*ifelse.cond),
 						self.compile(*ifelse.then),
@@ -233,7 +231,7 @@ impl Compilation {
 						}
 				),
 
-			UnaryNode(u) => {
+			ExprVal::UnaryNode(u) => {
 				let c_op = match u.op {
 					Not => "!",
 					Neg => "-",
@@ -244,23 +242,20 @@ impl Compilation {
 				format!("{}({})", c_op, self.compile(*u.expr))
 			}
 
-			LetNode(l) => {
-				let c_type_name = self.compile_type_name(l.var.r#type, mk_id(l.var.name.clone()), true);
+			ExprVal::LetNode(l) => {
+				let declared_var = l.declared.assert_assignee();
+				let c_type_name = self.compile_type_name(declared_var.r#type.clone(), mk_id(&declared_var.name), true);
 				let def_str =
 					match l.def {
-						Some(box Expr {
-							val: LambdaNode(lambda),
-							..
-						}) => {
+						box Expr {
+							val: ExprVal::LambdaNode(lambda), ..
+						} => {
 							let c_fn = self.compile_lambda(lambda, Some(&c_type_name));
-							format!("{} = {}", mk_id(l.var.name), c_fn)
+							format!("{} = {}", mk_id(&declared_var.name), c_fn)
 						}
 
-						Some(box expr) =>
-							format!("{} = {}", mk_id(l.var.name), self.compile(expr)),
-
-						_ =>
-							"".to_string()
+						box expr =>
+							format!("{} = {}", mk_id(&l.declared.assert_assignee().name), self.compile(expr)),
 					};
 				let prev_context = self.fn_context.pop().unwrap();
 				self.fn_context.push(
@@ -269,7 +264,7 @@ impl Compilation {
 				def_str + "\n"
 			}
 
-			BinaryNode(b) => {
+			ExprVal::BinaryNode(b) => {
 				let (c_left, c_right) = (
 					self.compile(*b.left),
 					self.compile(*b.right)
@@ -297,7 +292,7 @@ impl Compilation {
 				}
 			}
 
-			CallNode(c) => {
+			ExprVal::CallNode(c) => {
 				let args =
 					c.args.iter()
 						.map(|tr| compile_trivial(tr.clone()))
@@ -347,7 +342,7 @@ impl Compilation {
 					let member_declarations = s.iter().fold("".to_string(), |acc, a|
 						format!("{}\n{};",
 							acc,
-							self.compile_type_name(a.r#type.clone(), mk_id(a.name.clone()), true)
+							self.compile_type_name(a.r#type.clone(), mk_id(&a.name), true)
 						)
 					);
 					let s_name = type_hash(Struct(s.clone()));
@@ -393,17 +388,17 @@ impl Compilation {
 		let compiled_args =
 			args.into_iter()
 				.map(|(t, name)|
-					self.compile_type_name(t, mk_id(name), false)
+					self.compile_type_name(t, mk_id(&name), false)
 				)
 				.reduce(|acc, next| acc + ", " + &next)
 				.unwrap();
 		match ret_t {
-			Func(args_t) => {
+			Func(sub_args_t) => {
 				let compiled = format!("{}({})",
 					acc,
 					compiled_args
 				);
-				self.compile_fn_type(args_t, compiled, vec![])
+				self.compile_fn_type(sub_args_t, compiled, vec![])
 			}
 			_ => format!("{} {}({})",
 				self.compile_type_name(ret_t, "".to_string(), true),
@@ -447,7 +442,7 @@ impl Compilation {
 }
 
 fn compile_atomic(lit: TokenLiteral) -> String {
-	match lit {
+	match lit.val {
 		IntLit(i) => format!("{}", i),
 		FltLit(f) => format!("{}", f),
 		StrLit(s) => format!("\"{}\"", s),
@@ -462,15 +457,15 @@ fn compile_trivial(tr: Expr) -> String {
 		ExprVal::VarNode(v) if core_vals.contains_key(&v.name) =>
 			v.name,
 		ExprVal::VarNode(v) =>
-			mk_id(v.name),
+			mk_id(&v.name),
 		_ => panic!("trivial is not trivial")
 	}
 }
 
-fn mk_id(s: String) -> String {
+fn mk_id(s: &str) -> String {
 // TODO: not all brevis names are valid C names! fix!
 	if s.is_empty() {
-		s
+		"".to_string()
 	} else {
 		format!("_{}", s)
 	}

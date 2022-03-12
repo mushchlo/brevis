@@ -1,7 +1,7 @@
 use crate::lex::cradle::SourceLoc;
 
 
-#[derive(Hash, PartialEq, std::cmp::Eq)]
+#[derive(Clone, Hash, PartialEq, std::cmp::Eq)]
 pub struct ErrorMessage {
 	pub msg: String,
 	pub origins: Vec<SourceLoc>,

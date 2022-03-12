@@ -3,7 +3,6 @@
 #![feature(destructuring_assignment)]
 #![allow(non_upper_case_globals)]
 
-use std::collections::HashMap;
 use crate::{
 	lex::lex,
 	codegen::{
@@ -46,16 +45,13 @@ pub fn web_compile(src: String, core_fns: String, backend: String, err_fn: &js_s
 pub fn compile<F>(src: &str, core_fns: &str, backend: &str, err_fn: F) -> String
 where F: Fn(String) {
 	let mut lexed = lex(src);
-	coz::progress!("done lexing");
 	let mut parsed = lexed.parse();
-	coz::progress!("done parsing");
+	transform::desugar(&mut parsed);
 	let mut errors = verify::verify(&mut parsed);
 	parsed.annotate_captures();
-	coz::progress!("done annotating captures");
 	errors.extend(parsed.annotate());
-	coz::progress!("done inferring types!");
 
-	let tmp = if !errors.is_empty() {
+	if !errors.is_empty() {
 		let err_count = errors.len();
 		for err in errors {
 			print_error(src, err, &err_fn);
@@ -63,10 +59,9 @@ where F: Fn(String) {
 		err_fn(format!("Ended compilation due to the previous {} errors", err_count));
 		std::process::exit(1);
 	} else {
-		parsed.monomorphize(&mut Vec::new(), &mut HashMap::new());
-		coz::progress!("monomorphization");
+		parsed.monomorphize();
+		transform::optimize(&mut parsed);
 		let parsed_anf = anfify(parsed);
-		coz::progress!("anfification");
 		match backend {
 			"c" => {
 				let mut compiler = Compilation::new();
@@ -78,9 +73,5 @@ where F: Fn(String) {
 
 			_ => "".to_string()
 		}
-	};
-
-	coz::progress!("compilation");
-
-	tmp
+	}
 }
