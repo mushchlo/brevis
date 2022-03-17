@@ -7,12 +7,12 @@ use std::{
 };
 
 use crate::{
+	push_err,
 	error::ErrorMessage,
 	lex::tok::{UOpID, OpID},
 	parse::ast::{
 		Expr,
 		ExprVal,
-		Literal,
 		Parameter,
 	},
 	util::Env,
@@ -80,31 +80,14 @@ fn assert_mutable(
 	errs: &mut HashSet<ErrorMessage>
 ) {
 	use self::ExprVal::*;
-	use self::Literal::*;
-
-	macro_rules! push_error {
-		($origins:expr, $($fmt:tt)*) => {
-			errs.insert(ErrorMessage {
-				msg: format!($($fmt)*),
-				origins: $origins,
-			})
-		}
-	}
 
 	let asserter = |e: &Expr| {
 		match &e.val {
-			LiteralNode(AtomicLiteral(lit)) => {
-				push_error!(
-					vec![ lit.loc ],
-					"{} was attempted to be mutated",
-					e.describe(),
-				);
-			}
-
 			VarNode(v) => {
 				let var_declaration = mut_env.find(&v.name).unwrap();
 				if !var_declaration.mutable {
-					push_error!(
+					push_err!(
+						errs,
 						vec![ ex.loc, var_declaration.name_loc ],
 						"the variable `{}` is mutated, as seen below, but is declared as immutable (consider making this variable mutable)",
 						v.name

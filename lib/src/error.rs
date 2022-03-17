@@ -1,5 +1,14 @@
 use crate::lex::cradle::SourceLoc;
 
+#[macro_export]
+macro_rules! push_err {
+	($errs:expr, $origins:expr, $($fmt:tt)*) => {
+		$errs.insert(ErrorMessage {
+			msg: format!($($fmt)*),
+			origins: $origins,
+		})
+	}
+}
 
 #[derive(Clone, Hash, PartialEq, std::cmp::Eq)]
 pub struct ErrorMessage {
