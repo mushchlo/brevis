@@ -112,10 +112,10 @@ impl Unary {
 				vec![
 					Constraint::Equal(
 						(operand_t, operand_loc),
-						(Type::Pointer(box result.r#type.clone()), self.op_loc)
+						(Type::Pointer(box result.r#type.clone(), false), self.op_loc)
 					),
 				],
-			Ref => vec![],
+			Ref(_) => vec![],
 		};
 
 		ret.push(self.result_constraint(result));
@@ -128,7 +128,7 @@ impl Unary {
 			Not => Type::Bool,
 			Neg => self.expr.r#type.clone(),
 			At => get_type_var(),
-			Ref => Type::Pointer(box self.expr.r#type.clone()),
+			Ref(mutable) => Type::Pointer(box self.expr.r#type.clone(), mutable),
 		};
 
 		Constraint::Equal(

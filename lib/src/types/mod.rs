@@ -24,7 +24,8 @@ pub enum Type {
 
 	// Union(Vec<Aggregate>),
 	Struct(Vec<AggregateType>),
-	Pointer(Box<Type>),
+// Boolean represents mutability.
+	Pointer(Box<Type>, bool),
 // The argument types, ending with the return type
 	Func(Vec<Type>),
 

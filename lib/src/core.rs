@@ -22,7 +22,7 @@ lazy_static! {
 				let t = get_type_var();
 				vec![
 					Int,
-					Type::Pointer(box t)
+					Type::Pointer(box t, false)
 				]
 			}),
 		].iter().map(|(name, args)|

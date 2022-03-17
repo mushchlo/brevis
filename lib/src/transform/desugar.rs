@@ -45,6 +45,7 @@ fn desugar_assignment_patterns(e: &mut Expr) {
 				Struct(_s) => panic!("structure patterns not supported yet!"),
 			}
 		}
+
 		true
 	};
 

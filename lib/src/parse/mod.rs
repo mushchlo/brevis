@@ -551,9 +551,23 @@ impl TokenStream {
 		)
 	}
 
-	fn parse_unary(&mut self, op: UOpID) -> Expr {
+	fn parse_unary(&mut self, mut op: UOpID) -> Expr {
 		let op_loc = self.peek().unwrap().loc;
 		self.skip_token(UnaryOp(op));
+
+		match &mut op {
+			Ref(mutable) => {
+				*mutable = match self.peek().map(|t| t.val) {
+					Some(KeyWord(KeyWord::Mut)) => {
+						self.next();
+						true
+					}
+					_ => false,
+				};
+			}
+
+			_ => {}
+		}
 
 		let expr = box self.parse_atom();
 		new_expr(
@@ -645,8 +659,16 @@ impl TokenStream {
 					Struct(struct_args.into())
 				}
 
-				UnaryOp(Ref) =>
-					Type::Pointer(box self.parse_type()),
+				UnaryOp(Ref(_)) => {
+					let mutable_ref = match self.peek().map(|t| t.val) {
+						Some(KeyWord(KeyWord::Mut)) => {
+							self.next();
+							true
+						}
+						_ => false,
+					};
+					Type::Pointer(box self.parse_type(), mutable_ref)
+				}
 
 				non_type => panic!("expected type at {}, received {:?}", tok.loc.start, non_type),
 			},

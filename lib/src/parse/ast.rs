@@ -1,7 +1,10 @@
-use std::collections::{
-	VecDeque,
-	HashSet,
-	HashMap,
+use std::{
+	collections::{
+		VecDeque,
+		HashSet,
+		HashMap,
+	},
+	iter,
 };
 
 use crate::{
@@ -13,7 +16,6 @@ use crate::{
 		Constraint,
 		solve_constraints,
 		substitute,
-		generalize
 	},
 	parse::get_type_var,
 	lex::{
@@ -159,30 +161,6 @@ impl Pattern {
 		}
 	}
 
-	pub fn generalize(&mut self) {
-		use self::Pattern::*;
-		match self {
-			Empty(_) | Literal(_) => {},
-
-			Assignee(p) => {
-				p.r#type = generalize(p.r#type.clone());
-			}
-
-			Func { func, args } => {
-				func.r#type = generalize(func.r#type.clone());
-				for arg in args {
-					arg.r#type = generalize(arg.r#type.clone());
-				}
-			}
-
-			Struct(s) => {
-				for (_, pattern) in s {
-					pattern.generalize();
-				}
-			}
-		}
-	}
-
 	pub fn infer_as(&mut self, t: Type, loc: SourceLoc, errors: &mut HashSet<ErrorMessage>) {
 		let constraints = [self.constrain_as(t, loc)];
 		let substitutions = solve_constraints(&constraints, errors);
@@ -259,75 +237,150 @@ impl Pattern {
 impl Expr {
 // Transforms an expression recursively, with given functions.
 // A nice helper for functions that really just need to make small
-// modifications to the AST, without removing anything.
+// modifications to the AST.
 // Trans returns a boolean, indicating if transform
 // should recurse further into this node, and if so, post_trans
 // is also run after the recursion.
 	pub fn transform<E, T>(&mut self, mut trans: E, mut post_trans: T)
-	where E: for<'r> FnMut(&'r mut Expr) -> bool,
-		T: for<'r> FnMut(&'r mut Expr)
+	where E: Copy + FnMut(&mut Self) -> bool,
+		T: Copy + FnMut(&mut Self)
 	{
 		use self::ExprVal::*;
 
-	// the boolean marks "are we exiting?," i.e. do we run post_trans?
-		let mut call_stack: Vec<(&mut Expr, bool)> = vec![ (self, false) ];
+		macro_rules! recurse {
+			($to_trans:expr) => {
+				$to_trans.transform(trans, post_trans)
+			}
+		}
 
-		while let Some((current, exiting)) = call_stack.pop() {
-			if exiting {
-				post_trans(current);
-			} else if trans(current) {
-				unsafe {
-					call_stack.push((&mut *(current as *mut Expr), true));
-					match &mut current.val {
-					// Dead ends, all done!
-						LiteralNode(Literal::AtomicLiteral(_)) | VarNode(_) => {},
+		if trans(self) {
+			match &mut self.val {
+			// Dead ends, all done!
+				LiteralNode(Literal::AtomicLiteral(_)) | VarNode(_) => {},
 
-						LiteralNode(Literal::StructLiteral(ref mut s)) => {
-							for agg in s {
-								call_stack.push((&mut agg.val, false));
-							}
-						}
+				LiteralNode(Literal::StructLiteral(s)) => {
+					for agg in s {
+						recurse!(&mut agg.val);
+					}
+				}
 
-						BlockNode(ref mut b) => {
-							for line in b.iter_mut().rev() {
-								call_stack.push((line, false));
-							}
-						}
+				BlockNode(b) => {
+					for line in b.iter_mut() {
+						recurse!(line);
+					}
+				}
 
-						LetNode(ref mut l) => {
-							call_stack.push((&mut *l.def, false));
-						}
+				LetNode(l) => {
+					recurse!(&mut l.def);
+				}
 
-						LambdaNode(ref mut lam) => {
-							call_stack.push((&mut lam.body, false));
-						}
+				LambdaNode(lam) => {
+					recurse!(&mut lam.body);
+				}
 
-						IfNode(ref mut ifelse) => {
-							call_stack.push((&mut ifelse.cond, false));
-							call_stack.push((&mut ifelse.then, false));
-							if let Some(ref mut e) = ifelse.r#else {
-								call_stack.push((e, false));
-							}
-						}
+				IfNode(ifelse) => {
+					recurse!(&mut ifelse.cond);
+					recurse!(&mut ifelse.then);
+					if let Some(box e) = &mut ifelse.r#else {
+						recurse!(e);
+					}
+				}
 
-						UnaryNode(ref mut u) => {
-							call_stack.push((&mut u.expr, false));
-						}
+				UnaryNode(u) => {
+					recurse!(&mut u.expr);
+				}
 
-						BinaryNode(ref mut b) => {
-							call_stack.push((&mut b.right, false));
-							call_stack.push((&mut b.left, false));
-						}
+				BinaryNode(b) => {
+					recurse!(&mut b.right);
+					recurse!(&mut b.left);
+				}
 
-						CallNode(ref mut c) => {
-							call_stack.push((&mut *c.func, false));
-							for arg in &mut c.args {
-								call_stack.push((arg, false));
-							}
-						}
+				CallNode(c) => {
+					recurse!(&mut c.func);
+					for arg in &mut c.args {
+						recurse!(arg);
 					}
 				}
 			}
+		}
+
+		post_trans(self);
+	}
+
+	pub fn visit<A, B>(&self, mut pre_visit: B, mut post_visit: A)
+	where B: FnMut(&Self) -> bool,
+		A: FnMut(&Self)
+	{
+		let mut to_visit = vec![ self ];
+		let mut visited: HashSet<*const Expr> = HashSet::new();
+		while let Some(ex) = to_visit.pop() {
+			if visited.contains(&(ex as *const Expr)) {
+				post_visit(ex);
+			} else if pre_visit(ex) {
+				to_visit.push(ex);
+				to_visit.append(&mut ex.descendents());
+				visited.insert(ex as *const Expr);
+			}
+		}
+	}
+
+	// Used in error messages like "Attempted to assign to _"
+	pub fn describe(&self) -> &str {
+		use self::ExprVal::*;
+		use self::Literal::*;
+		use lex::tok::LiteralVal::*;
+
+		match &self.val {
+			LiteralNode(AtomicLiteral(atom)) =>
+				match &atom.val {
+					IntLit(_) => "an integer literal",
+					StrLit(_) => "a string literal",
+					FltLit(_) => "a floating-point literal",
+					BoolLit(_) => "a boolean literal",
+				},
+			LiteralNode(StructLiteral(_)) => "a structure literal",
+			LetNode(_) => "a declaration",
+			VarNode(_) => "a variable",
+			BlockNode(_) => "a block",
+			LambdaNode(_) => "a function",
+			IfNode(ifelse) if ifelse.r#else.is_some() => "an if-else-expression",
+			IfNode(_) => "an if-expression",
+			UnaryNode(_) => "a unary expression",
+			BinaryNode(_) => "a binary expression",
+			CallNode(_) => "a function call",
+		}
+	}
+
+// Returns references to the shallowest amount of descendents,
+// in visiting order when popping from the stack.
+	fn descendents(&self) -> Vec<&Self> {
+		use self::ExprVal::*;
+
+		match &self.val {
+			// Dead ends, all done!
+			LiteralNode(Literal::AtomicLiteral(_)) | VarNode(_) => Vec::new(),
+
+			LiteralNode(Literal::StructLiteral(s)) => s.iter().map(|agg| &agg.val).collect(),
+
+			BlockNode(b) => b.iter().rev().collect(),
+
+			LetNode(l) => vec![ &l.def ],
+
+			LambdaNode(lam) => vec![ &lam.body ],
+
+			IfNode(ifelse) =>
+				IntoIterator::into_iter([ ifelse.cond.as_ref(), ifelse.then.as_ref() ])
+					.chain(ifelse.r#else.as_ref().iter().map(|&e| e.as_ref()))
+					.collect(),
+
+			UnaryNode(u) => vec![ &u.expr ],
+
+			BinaryNode(b) => vec![ &b.right, &b.left ],
+
+			CallNode(c) =>
+				iter::once(&*c.func)
+					.chain(c.args.iter())
+					.collect(),
 		}
 	}
 }

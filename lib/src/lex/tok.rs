@@ -36,7 +36,7 @@ pub enum UOpID {
 	Not, // !
 	Neg, // -
 	At,  // @
-	Ref, // &
+	Ref(bool), // & and &mut
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]

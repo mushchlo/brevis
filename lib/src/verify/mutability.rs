@@ -8,24 +8,22 @@ use std::{
 
 use crate::{
 	error::ErrorMessage,
-	lex::tok::OpID,
+	lex::tok::{UOpID, OpID},
 	parse::ast::{
 		Expr,
 		ExprVal,
+		Literal,
 		Parameter,
 	},
 	util::Env,
 };
 
-pub fn verify_mutability(to_verify: &mut Expr) -> HashSet<ErrorMessage> {
+pub fn verify_mutability(to_verify: &Expr) -> HashSet<ErrorMessage> {
 	let errs = Mutex::new(HashSet::new());
 	let mutability_env: Mutex<Vec<HashMap<String, Parameter>>>
 		= Mutex::new(Vec::new());
 
-// TODO: Distinguish between mutable references, and immutable references.
-// until that is done, we don't know if it's OK to use a pointer to an
-// immutable value safely.
-	let transifier = |e: &mut Expr| {
+	let verify = |e: &Expr| {
 		let mut errs = errs.lock().unwrap();
 		let mutability_env = &mut *mutability_env.lock().unwrap();
 		match &e.val {
@@ -46,18 +44,12 @@ pub fn verify_mutability(to_verify: &mut Expr) -> HashSet<ErrorMessage> {
 				}
 			}
 
-		// TODO: Assignment by pattern will break this! Just a dumb check for
-		// var name assignment
+			ExprVal::UnaryNode(u) if u.op == UOpID::Ref(true) => {
+				assert_mutable(&u.expr, mutability_env, &mut errs);
+			}
+
 			ExprVal::BinaryNode(b) if b.op == OpID::Eq => {
-				if let ExprVal::VarNode(v) = &b.left.val {
-					let var_declaration = mutability_env.find(&v.name).unwrap();
-					if !var_declaration.mutable {
-						errs.insert(ErrorMessage {
-							msg: format!("the variable `{}` is reassigned, as seen below, but is declared as immutable (consider making this variable mutable)", v.name),
-							origins: vec![ b.op_loc, var_declaration.name_loc ],
-						});
-					}
-				}
+				assert_mutable(&b.left, mutability_env, &mut errs);
 			}
 
 			_ => {}
@@ -66,7 +58,7 @@ pub fn verify_mutability(to_verify: &mut Expr) -> HashSet<ErrorMessage> {
 		true
 	};
 
-	let post_transifier = |e: &mut Expr| {
+	let manage_env = |e: &Expr| {
 		let mut mutability_env = mutability_env.lock().unwrap();
 		match &e.val {
 			ExprVal::BlockNode(_) | ExprVal::LambdaNode(_) => {
@@ -77,7 +69,54 @@ pub fn verify_mutability(to_verify: &mut Expr) -> HashSet<ErrorMessage> {
 		}
 	};
 
-	to_verify.transform(transifier, post_transifier);
+	to_verify.visit(verify, manage_env);
 
 	errs.into_inner().unwrap()
+}
+
+fn assert_mutable(
+	ex: &Expr,
+	mut_env: &Vec<HashMap<String, Parameter>>,
+	errs: &mut HashSet<ErrorMessage>
+) {
+	use self::ExprVal::*;
+	use self::Literal::*;
+
+	macro_rules! push_error {
+		($origins:expr, $($fmt:tt)*) => {
+			errs.insert(ErrorMessage {
+				msg: format!($($fmt)*),
+				origins: $origins,
+			})
+		}
+	}
+
+	let asserter = |e: &Expr| {
+		match &e.val {
+			LiteralNode(AtomicLiteral(lit)) => {
+				push_error!(
+					vec![ lit.loc ],
+					"{} was attempted to be mutated",
+					e.describe(),
+				);
+			}
+
+			VarNode(v) => {
+				let var_declaration = mut_env.find(&v.name).unwrap();
+				if !var_declaration.mutable {
+					push_error!(
+						vec![ ex.loc, var_declaration.name_loc ],
+						"the variable `{}` is mutated, as seen below, but is declared as immutable (consider making this variable mutable)",
+						v.name
+					);
+				}
+			}
+
+			_ => {}
+		}
+
+		true
+	};
+
+	ex.visit(asserter, |_| {});
 }

@@ -235,7 +235,7 @@ impl Compilation {
 				let c_op = match u.op {
 					Not => "!",
 					Neg => "-",
-					Ref => "&",
+					Ref(_) => "&",
 					At => "*",
 				};
 
@@ -317,7 +317,7 @@ impl Compilation {
 				Str => "char*",
 				Bool => "char",
 
-				Pointer(box r) => {
+				Pointer(box r, _) => {
 					return self.compile_type_name(
 						r,
 						format!("*{}", name),
@@ -480,7 +480,7 @@ fn type_hash(t: Type) -> String {
 		Float => "f".to_string(),
 		Str => "s".to_string(),
 		Bool => "b".to_string(),
-		Pointer(box r) =>
+		Pointer(box r, _) =>
 			format!("p{}", type_hash(r)),
 		Struct(s) =>
 			format!("struct__{}__",

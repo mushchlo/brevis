@@ -23,7 +23,8 @@ pub fn name_of(t: &Type) -> String {
 		Forall(_, sub_t) => format!(" generic {}", name_of(sub_t)),
 		TypeVar(_) => " generic value".to_string(),
 		Struct(_) => " structure".to_string(),
-		Pointer(_) => " pointer".to_string(),
+		Pointer(_, false) => " pointer to a".to_string(),
+		Pointer(_, true) => " pointer to a mutable".to_string(),
 		Func(_) => " function".to_string(),
 	}
 }
@@ -57,7 +58,11 @@ fn display_type(t: &Type, generic_names: &mut HashMap<TypeVarId, char>) -> Strin
 
 			format!("'{}", name)
 		}
-		Pointer(box pointed_t) => format!("&{}", display_type(pointed_t, generic_names)),
+		Pointer(box pointed_t, mutable) =>
+			format!("&{}{}",
+				if *mutable { "mut" } else { "" },
+				display_type(pointed_t, generic_names)
+			),
 		Struct(s) =>
 			format!("[ {} ]",
 				s.iter()

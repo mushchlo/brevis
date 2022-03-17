@@ -257,7 +257,7 @@ fn map_op(opstr: String, prev_op: Option<&TokenValue>) -> TokenValue {
 			UnaryOp(Neg)
 		}
 		"@" => UnaryOp(At),
-		"&" => UnaryOp(Ref),
+		"&" => UnaryOp(Ref(false)),
 		"=" => AssignOp(Eq),
 		"->" => KeyWord(KeyWord::Arrow),
 		op => BinaryOp(

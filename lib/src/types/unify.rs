@@ -429,8 +429,8 @@ pub fn substitute(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> Type {
 		Float => Float,
 		Str => Str,
 		Bool => Bool,
-		Pointer(box r) =>
-			Pointer(box substitute(substitutions, r)),
+		Pointer(box r, mutable) =>
+			Pointer(box substitute(substitutions, r), *mutable),
 
 		TypeVar(v) if substitutions.contains_key(v) =>
 			substitute(
@@ -501,7 +501,7 @@ fn unify(
 			}
 		}
 
-		(Pointer(box r1), Pointer(box r2)) =>
+		(Pointer(box r1, _), Pointer(box r2, _)) =>
 			unify(substitutions, errors, r1, r2, origins),
 
 		(Forall(args1, generic_t1), Forall(args2, generic_t2)) => {
@@ -557,7 +557,7 @@ fn occurs_in(substitutions: &HashMap<TypeVarId, Type>, index: TypeVarId, t: &Typ
 	match t {
 		Void | Int | Float | Str | Bool => false,
 
-		Pointer(box p) =>
+		Pointer(box p, _) =>
 			occurs_in(substitutions, index, p),
 
 		TypeVar(i) if substitutions.contains_key(i) =>
@@ -592,7 +592,7 @@ pub fn free_in_type(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> HashS
 			free_in_type(substitutions, &substitutions[i]),
 		TypeVar(i) =>
 			HashSet::from([*i]),
-		Pointer(box r) =>
+		Pointer(box r, _) =>
 			free_in_type(substitutions, r),
 		Func(args_t) =>
 			args_t.iter()
@@ -623,7 +623,7 @@ pub fn generics_in_type(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> H
 			generics_in_type(substitutions, &substitutions[i]),
 		TypeVar(_) =>
 			HashSet::new(),
-		Pointer(box r) =>
+		Pointer(box r, _) =>
 			generics_in_type(substitutions, r),
 		Func(args_t) =>
 			args_t.iter()
@@ -678,11 +678,11 @@ impl Expr {
 // Typevar_env keeps track of the free variables in the environment if supplied, and pushes
 // to generics_errors when it finds unconstrained typevars outside of a generic function.
 pub fn annotate_helper<'a>(
-	substitutions: &'a mut HashMap<TypeVarId, Type>,
+	substitutions: &'a HashMap<TypeVarId, Type>,
 	typevar_env: Option<&'a Mutex<Vec<Vec<TypeVarId>>>>,
 	generics_errors: Option<&'a Mutex<HashSet<ErrorMessage>>>
-) -> impl 'a + Fn(&mut Expr) -> bool {
-	move |e| {
+) -> impl 'a + Copy + Fn(&mut Expr) -> bool {
+	move |e: &mut Expr| {
 		e.r#type = substitute(substitutions, &e.r#type);
 		if let (Forall(generics, _), Some(errors), Some(env))
 			= (&e.r#type, generics_errors.as_ref(), typevar_env.as_ref())
