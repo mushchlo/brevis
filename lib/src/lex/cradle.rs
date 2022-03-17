@@ -1,6 +1,8 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
+use crate::TAB_WIDTH;
+
 pub struct CharsPos<'a> {
 	pub pos: SourcePos,
 	pub source: Peekable<Chars<'a>>,
@@ -78,12 +80,19 @@ impl<'a> Iterator for CharsPos<'a> {
 			None => None,
 			Some(ch) => {
 				self.pos.index += 1;
-				if ch == '\n' {
-					self.pos.row += 1;
-					self.pos.col = 1;
-				} else {
-					self.pos.col += 1;
+				match ch {
+					'\n' => {
+						self.pos.row += 1;
+						self.pos.col = 1;
+					}
+					'\t' => {
+						self.pos.col += TAB_WIDTH;
+					}
+					_ => {
+						self.pos.col += 1;
+					}
 				}
+
 				Some((self.pos, ch))
 			}
 		}

@@ -31,6 +31,8 @@ mod types;
 mod util;
 mod verify;
 
+pub const TAB_WIDTH: u32 = 4;
+
 #[wasm_bindgen]
 pub fn web_compile(src: String, core_fns: String, backend: String, err_fn: &js_sys::Function) -> String {
 	console_error_panic_hook::set_once();
