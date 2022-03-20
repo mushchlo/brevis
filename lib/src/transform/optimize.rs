@@ -10,7 +10,7 @@ use crate::{
 	},
 };
 
-// Expects an inferred, ANFified, monomorphized AST
+// Expects an inferred, monomorphized AST
 pub fn optimize(e: &mut Expr) {
 	remove_dead_code(e);
 }
