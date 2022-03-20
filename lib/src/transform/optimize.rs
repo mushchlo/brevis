@@ -37,7 +37,6 @@ fn remove_dead_code(e: &mut Expr) {
 					declared_in_block.last_mut().unwrap().push(assignee.name.clone());
 					used.insert(assignee.name.clone(), false);
 				}
-
 			}
 
 			Block(_) => {

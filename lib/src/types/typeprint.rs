@@ -96,7 +96,7 @@ fn display_type(t: &Type, generic_names: &mut HashMap<TypeVarId, char>) -> Strin
 					.reduce(|acc, next|
 						acc + ", " + &next
 					)
-					.unwrap(),
+					.unwrap_or_else(String::new),
 				display_type(&ret_t, generic_names)
 			)
 		}
