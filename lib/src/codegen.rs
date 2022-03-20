@@ -1,7 +1,10 @@
 use lazy_static::lazy_static;
 use maplit::hashmap;
 
-use std::collections::HashMap;
+use std::collections::{
+	HashMap,
+	hash_map::*,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::iter;
 
@@ -20,7 +23,7 @@ use crate::{
 	},
 	lex::tok::{
 		TokenLiteral,
-		LiteralVal::*,
+		LiteralVal,
 		OpID,
 		OpID::*,
 		UOpID::*,
@@ -63,7 +66,7 @@ fn lambda_name() -> String {
 
 pub fn compile_js(e: Expr) -> String {
 	format!("({})", match e.val {
-		ExprVal::LambdaNode(l) =>
+		ExprVal::Lambda(l) =>
 			format!("(function ({}) {{ return {}; }})",
 				l.args.iter()
 					.map(|v| mk_id(&v.name))
@@ -71,22 +74,22 @@ pub fn compile_js(e: Expr) -> String {
 					.unwrap_or_else(|| "".to_string()),
 				compile_js(*l.body)
 			),
-		ExprVal::LiteralNode(AtomicLiteral(atom)) =>
+		ExprVal::Literal(AtomicLiteral(atom)) =>
 			compile_atomic(atom),
-		ExprVal::LiteralNode(StructLiteral(_s)) =>
+		ExprVal::Literal(StructLiteral(_s)) =>
 			panic!("structs not yet implemented for js backend"),
-		ExprVal::LetNode(l) =>
+		ExprVal::Let(l) =>
 			format!("({} = {})", mk_id(&l.declared.assert_assignee().name), compile_js(*l.def)),
-		ExprVal::VarNode(v) =>
+		ExprVal::Var(v) =>
 			mk_id(&v.name),
-		ExprVal::BlockNode(b) =>
+		ExprVal::Block(b) =>
 			format!("({})",
 				b.iter()
 					.map(|line| compile_js(line.clone()))
 					.reduce(|acc, next| acc + "," + &next)
 					.unwrap_or_else(|| "".to_string()),
 			),
-		ExprVal::IfNode(ifelse) =>
+		ExprVal::If(ifelse) =>
 			format!("({}) ? ({}) : ({})",
 				compile_js(*ifelse.cond),
 				compile_js(*ifelse.then),
@@ -96,7 +99,7 @@ pub fn compile_js(e: Expr) -> String {
 					"false".to_string()
 				}
 			),
-		ExprVal::UnaryNode(u) =>
+		ExprVal::Unary(u) =>
 			format!("{}({})",
 				match u.op {
 					Not => "!",
@@ -105,7 +108,7 @@ pub fn compile_js(e: Expr) -> String {
 				},
 				compile_js(*u.expr)
 			),
-		ExprVal::BinaryNode(b) =>
+		ExprVal::Binary(b) =>
 			if b.op == Xor {
 				format!("!({}) != !({})",
 					compile_js(*b.left),
@@ -120,7 +123,7 @@ pub fn compile_js(e: Expr) -> String {
 					compile_js(*b.right)
 				)
 			},
-		ExprVal::CallNode(c) =>
+		ExprVal::Call(c) =>
 			format!("{}({})",
 				compile_js(*c.func),
 				c.args.iter()
@@ -194,13 +197,13 @@ impl Compilation {
 
 	pub fn compile(&mut self, e: Expr) -> String {
 		match e.val {
-			ExprVal::LiteralNode(lit) =>
+			ExprVal::Literal(lit) =>
 				self.compile_literal(lit),
 
-			ExprVal::VarNode(v) if core_vals.contains_key(&v.name) => v.name,
-			ExprVal::VarNode(v) => mk_id(&v.name),
+			ExprVal::Var(v) if core_vals.contains_key(&v.name) => v.name,
+			ExprVal::Var(v) => mk_id(&v.name),
 
-			ExprVal::BlockNode(b) =>
+			ExprVal::Block(b) =>
 				format!("({})",
 					b.iter()
 						.filter_map(|l| {
@@ -217,10 +220,10 @@ impl Compilation {
 						.unwrap()
 				),
 
-			ExprVal::LambdaNode(l) =>
+			ExprVal::Lambda(l) =>
 				self.compile_lambda(l, None),
 
-			ExprVal::IfNode(ifelse) =>
+			ExprVal::If(ifelse) =>
 				format!("({}) ? ({}) : ({})",
 						self.compile(*ifelse.cond),
 						self.compile(*ifelse.then),
@@ -231,7 +234,7 @@ impl Compilation {
 						}
 				),
 
-			ExprVal::UnaryNode(u) => {
+			ExprVal::Unary(u) => {
 				let c_op = match u.op {
 					Not => "!",
 					Neg => "-",
@@ -242,13 +245,13 @@ impl Compilation {
 				format!("{}({})", c_op, self.compile(*u.expr))
 			}
 
-			ExprVal::LetNode(l) => {
+			ExprVal::Let(l) => {
 				let declared_var = l.declared.assert_assignee();
 				let c_type_name = self.compile_type_name(declared_var.r#type.clone(), mk_id(&declared_var.name), true);
 				let def_str =
 					match l.def {
 						box Expr {
-							val: ExprVal::LambdaNode(lambda), ..
+							val: ExprVal::Lambda(lambda), ..
 						} => {
 							let c_fn = self.compile_lambda(lambda, Some(&c_type_name));
 							format!("{} = {}", mk_id(&declared_var.name), c_fn)
@@ -264,7 +267,7 @@ impl Compilation {
 				def_str + "\n"
 			}
 
-			ExprVal::BinaryNode(b) => {
+			ExprVal::Binary(b) => {
 				let (c_left, c_right) = (
 					self.compile(*b.left),
 					self.compile(*b.right)
@@ -292,7 +295,7 @@ impl Compilation {
 				}
 			}
 
-			ExprVal::CallNode(c) => {
+			ExprVal::Call(c) => {
 				let args =
 					c.args.iter()
 						.map(|tr| compile_trivial(tr.clone()))
@@ -347,15 +350,15 @@ impl Compilation {
 					);
 					let s_name = type_hash(Struct(s.clone()));
 
-					if !self.type_map.contains_key(&Struct(s.clone())) {
+					if let Entry::Vacant(e) = self.type_map.entry(Struct(s.clone())) {
 						self.global_defs += &format!("struct {} {{{}\n}};\n", s_name, member_declarations);
-						self.type_map.insert(Struct(s.clone()), format!("struct {}", s_name));
+						e.insert(format!("struct {}", s_name));
 					}
 
 					&self.type_map[&Struct(s)]
 				}
 
-				TypeVar(_) | Forall(_, _) => panic!("generic type {:#?} persisted into code generation, when it should have been removed by momonorphization", t)
+				Free(_) | Forall(_, _) => panic!("generic type {:#?} persisted into code generation, when it should have been removed by momonorphization", t)
 			}.to_string(),
 
 			if !name.is_empty() {
@@ -443,20 +446,20 @@ impl Compilation {
 
 fn compile_atomic(lit: TokenLiteral) -> String {
 	match lit.val {
-		IntLit(i) => format!("{}", i),
-		FltLit(f) => format!("{}", f),
-		StrLit(s) => format!("\"{}\"", s),
-		BoolLit(b) => (if b {"1"} else {"0"}).to_string(),
+		LiteralVal::Int(i) => format!("{}", i),
+		LiteralVal::Flt(f) => format!("{}", f),
+		LiteralVal::Str(s) => format!("\"{}\"", s),
+		LiteralVal::Bool(b) => (if b {"1"} else {"0"}).to_string(),
 	}
 }
 
 fn compile_trivial(tr: Expr) -> String {
 	match tr.val {
-		ExprVal::LiteralNode(AtomicLiteral(atom)) =>
+		ExprVal::Literal(AtomicLiteral(atom)) =>
 			compile_atomic(atom),
-		ExprVal::VarNode(v) if core_vals.contains_key(&v.name) =>
+		ExprVal::Var(v) if core_vals.contains_key(&v.name) =>
 			v.name,
-		ExprVal::VarNode(v) =>
+		ExprVal::Var(v) =>
 			mk_id(&v.name),
 		_ => panic!("trivial is not trivial")
 	}
@@ -496,6 +499,6 @@ fn type_hash(t: Type) -> String {
 					.reduce(|acc, next| acc + "_" + &next)
 					.unwrap()
 			),
-		TypeVar(_) | Forall(_, _) => panic!(),
+		Free(_) | Forall(_, _) => panic!(),
 	}
 }

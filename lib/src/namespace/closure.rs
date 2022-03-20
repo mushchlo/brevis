@@ -44,7 +44,7 @@ impl Expr {
 			let mut env = env.lock().unwrap();
 			let mut captured_stack = captured_stack.lock().unwrap();
 			match &e.val {
-				ExprVal::VarNode(var) => {
+				ExprVal::Var(var) => {
 					if !env.last().unwrap().contains_key(&var.name)
 						&& !env.first().unwrap().contains_key(&var.name) {
 							captured_stack.last_mut().unwrap()
@@ -55,7 +55,7 @@ impl Expr {
 								);
 					}
 				}
-				ExprVal::LambdaNode(l) => {
+				ExprVal::Lambda(l) => {
 					env.push(
 						l.args.iter()
 							.map(|p| (p.name.clone(), p.clone()))
@@ -63,7 +63,7 @@ impl Expr {
 					);
 					captured_stack.push(Vec::new());
 				}
-				ExprVal::LetNode(ref l) => {
+				ExprVal::Let(ref l) => {
 					for declared in l.declared.assignees() {
 						env.last_mut().unwrap().insert(declared.name.clone(), declared.clone());
 					}
@@ -75,7 +75,7 @@ impl Expr {
 			true
 		};
 		let post_transifier = |e: &mut Expr| {
-			if let ExprVal::LambdaNode(ref mut l) = &mut e.val {
+			if let ExprVal::Lambda(l) = &mut e.val {
 				env.lock().unwrap().pop();
 				l.captured = captured_stack.lock().unwrap()
 					.pop().unwrap().into_iter().collect();

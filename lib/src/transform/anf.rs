@@ -28,49 +28,49 @@ pub fn anfify(e: Expr) -> Expr {
 		loc: e.loc,
 		val:
 			match e.val {
-				LiteralNode(lit) => LiteralNode(lit),
-				VarNode(v) =>
-					VarNode(v),
-				LetNode(l) =>
-					LetNode(ast::Let {
+				Literal(lit) => Literal(lit),
+				Var(v) =>
+					Var(v),
+				Let(l) =>
+					Let(ast::Let {
 						declared: l.declared.clone(),
 						def: box anfify(*l.def)
 					}),
-				IfNode(i) =>
-					IfNode(ast::IfElse {
+				If(i) =>
+					If(ast::IfElse {
 						cond: box anfify(*i.cond),
 						then: box anfify(*i.then),
 						r#else: i.r#else.map(|box e| box anfify(e)),
 					}),
-				BlockNode(b) =>
-					BlockNode(
+				Block(b) =>
+					Block(
 						b.iter().map(|line| anfify(line.clone())).collect()
 					),
-				LambdaNode(l) =>
-					LambdaNode(ast::Lambda {
+				Lambda(l) =>
+					Lambda(ast::Lambda {
 						args: l.args,
 						captured: l.captured,
 						body: Box::new(anfify(*l.body))
 					}),
-				UnaryNode(u) =>
-					UnaryNode(ast::Unary {
+				Unary(u) =>
+					Unary(ast::Unary {
 						op: u.op,
 						op_loc: u.op_loc,
 						expr: Box::new(anfify(*u.expr))
 					}),
-				BinaryNode(b) =>
-					BinaryNode(ast::Binary {
+				Binary(b) =>
+					Binary(ast::Binary {
 						op: b.op,
 						op_loc: b.op_loc,
 						left: box anfify(*b.left),
 						right: box anfify(*b.right),
 					}),
-				CallNode(c) => {
+				Call(c) => {
 					let mut block = VecDeque::new();
 					let mut trivial_args = VecDeque::new();
 					for arg in c.args.into_iter() {
 						trivial_args.push_back(match &arg.val {
-							LiteralNode(_) | VarNode(_) => arg,
+							Literal(_) | Var(_) => arg,
 
 							_ => {
 								let name = unique_name();
@@ -78,7 +78,7 @@ pub fn anfify(e: Expr) -> Expr {
 								block.push_back(
 									Expr {
 										val:
-											LetNode(ast::Let {
+											Let(ast::Let {
 												declared: Pattern::Assignee(ast::Parameter {
 													name: name.clone(),
 													mutable: false,
@@ -94,7 +94,7 @@ pub fn anfify(e: Expr) -> Expr {
 									}
 								);
 								Expr {
-									val: VarNode(
+									val: Var(
 										ast::Variable {
 											name,
 											generics: HashMap::new(),
@@ -108,7 +108,7 @@ pub fn anfify(e: Expr) -> Expr {
 					}
 					block.push_back(
 						Expr {
-							val: CallNode(ast::Call {
+							val: Call(ast::Call {
 								args: trivial_args,
 								func: Box::new(anfify(*c.func))
 							}),
@@ -117,7 +117,7 @@ pub fn anfify(e: Expr) -> Expr {
 						}
 					);
 
-					BlockNode(block)
+					Block(block)
 				}
 			}
 	}

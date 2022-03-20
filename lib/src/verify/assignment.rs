@@ -15,7 +15,7 @@ pub fn verify_assignment(to_verify: &Expr) -> HashSet<ErrorMessage> {
 	let mut errors = HashSet::new();
 	let verify = |e: &Expr| {
 		match &e.val {
-			ExprVal::BinaryNode(b) if b.op == OpID::Eq => {
+			ExprVal::Binary(b) if b.op == OpID::Eq => {
 				assert_assignable(&b.left, b.op_loc, &mut errors);
 			}
 
@@ -34,7 +34,7 @@ fn assert_assignable(e: &Expr, op_loc: SourceLoc, errors: &mut HashSet<ErrorMess
 	use self::ExprVal::*;
 	let asserter = |e: &Expr| {
 		match &e.val {
-			UnaryNode(u) if u.op != UOpID::At => {
+			Unary(u) if u.op != UOpID::At => {
 				push_err!(
 					errors,
 					vec![ e.loc, op_loc ],
@@ -44,8 +44,8 @@ fn assert_assignable(e: &Expr, op_loc: SourceLoc, errors: &mut HashSet<ErrorMess
 				false
 			}
 
-			LiteralNode(_) | LetNode(_) | BlockNode(_) | LambdaNode(_)
-				| IfNode(_) | BinaryNode(_) | CallNode(_) => {
+			Literal(_) | Let(_) | Block(_) | Lambda(_)
+				| If(_) | Binary(_) | Call(_) => {
 				push_err!(
 					errors,
 					vec![ e.loc, op_loc ],

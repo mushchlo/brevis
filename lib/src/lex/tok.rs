@@ -25,10 +25,10 @@ pub struct TokenLiteral {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum LiteralVal {
-	StrLit(String),
-	IntLit(i64),
-	FltLit(f64),
-	BoolLit(bool),
+	Str(String),
+	Int(i64),
+	Flt(f64),
+	Bool(bool),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]

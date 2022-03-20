@@ -10,7 +10,7 @@ use crate::lex::tok::{
 	TokenValue,
 	TokenValue::*,
 	TokenLiteral,
-	LiteralVal::*,
+	LiteralVal,
 	KeyWord,
 	OpID::*,
 	UOpID::*,
@@ -112,7 +112,7 @@ impl CharsPos<'_> {
 
 		let strlit = self.make_token(|s| {
 			let start_pos = s.peek().unwrap().0;
-			let val = StrLit(s.read_lit(|&ch| {
+			let val = LiteralVal::Str(s.read_lit(|&ch| {
 				let cont = ch != '"' || escaped;
 				escaped = !escaped && ch == '\\';
 				cont
@@ -148,14 +148,14 @@ impl CharsPos<'_> {
 		let num_lit = TokenValue::Literal(
 			TokenLiteral {
 				val: if is_flt {
-					FltLit(to_num_lit.parse::<f64>().unwrap_or_else(|_| {
+					LiteralVal::Flt(to_num_lit.parse::<f64>().unwrap_or_else(|_| {
 						panic!(
 							":{}:{} malformed floating-point literal `{}`",
 							startpos.row, startpos.col, to_num_lit
 						)
 					}))
 				} else {
-					IntLit(to_num_lit.parse::<i64>().unwrap_or_else(|_| {
+					LiteralVal::Int(to_num_lit.parse::<i64>().unwrap_or_else(|_| {
 						panic!(
 							":{}:{} malformed integer literal",
 							startpos.row, startpos.col
@@ -233,11 +233,11 @@ impl CharsPos<'_> {
 fn map_keyword(kwstr: String, loc: SourceLoc) -> TokenValue {
 	match kwstr.as_str() {
 		"true" => Literal(TokenLiteral {
-			val: BoolLit(true),
+			val: LiteralVal::Bool(true),
 			loc,
 		}),
 		"false" => Literal(TokenLiteral {
-			val: BoolLit(false),
+			val: LiteralVal::Bool(false),
 			loc,
 		}),
 		"and" => BinaryOp(And),

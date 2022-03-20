@@ -2,6 +2,7 @@
 #![feature(box_syntax)]
 #![feature(destructuring_assignment)]
 #![allow(non_upper_case_globals)]
+#![allow(clippy::unused_unit)]
 
 use crate::{
 	lex::lex,

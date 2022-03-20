@@ -32,7 +32,7 @@ fn remove_dead_code(e: &mut Expr) {
 		let mut declared_in_block = declared_in_block.lock().unwrap();
 		let mut used = used.lock().unwrap();
 		match &mut ex.val {
-			LetNode(l) => {
+			Let(l) => {
 				for assignee in l.declared.assignees() {
 					declared_in_block.last_mut().unwrap().push(assignee.name.clone());
 					used.insert(assignee.name.clone(), false);
@@ -40,11 +40,11 @@ fn remove_dead_code(e: &mut Expr) {
 
 			}
 
-			BlockNode(_) => {
+			Block(_) => {
 				declared_in_block.push(Vec::new());
 			}
 
-			VarNode(var) => {
+			Var(var) => {
 				used.insert(var.name.clone(), true);
 			}
 
@@ -57,11 +57,11 @@ fn remove_dead_code(e: &mut Expr) {
 		let mut declared_in_block = declared_in_block.lock().unwrap();
 		let mut used = used.lock().unwrap();
 		match &ex.val {
-			BlockNode(b) => {
-				ex.val = BlockNode(
+			Block(b) => {
+				ex.val = Block(
 					b.clone().into_iter()
 						.filter(|line|
-							if let LetNode(l) = &line.val {
+							if let Let(l) = &line.val {
 								l.declared.assignees().iter().all(|a| used[&a.name])
 							} else {
 								true
@@ -74,7 +74,7 @@ fn remove_dead_code(e: &mut Expr) {
 				}
 			}
 
-			LetNode(l) => {
+			Let(l) => {
 			// Nice try, recursively defined values.
 				for declared in l.declared.assignees() {
 					used.insert(declared.name.clone(), false);

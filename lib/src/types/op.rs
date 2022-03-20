@@ -32,7 +32,7 @@ impl Binary {
 		let mut ret = match self.op {
 			Eq =>
 				match &self.left.val {
-					ExprVal::UnaryNode(u) if u.op == At =>
+					ExprVal::Unary(u) if u.op == At =>
 						vec![
 							Constraint::Equal(left, right.clone()),
 							Constraint::Equal(
@@ -67,7 +67,7 @@ impl Binary {
 
 			Member => {
 				let new_right = match &self.right.val {
-					ExprVal::VarNode(s) => (
+					ExprVal::Var(s) => (
 						AggregateType {
 							name: s.name.clone(),
 							r#type: right.0,

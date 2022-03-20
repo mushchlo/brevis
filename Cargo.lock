@@ -25,7 +25,6 @@ name = "brevis-lib"
 version = "0.0.1"
 dependencies = [
  "console_error_panic_hook",
- "coz",
  "js-sys",
  "lazy_static",
  "maplit",

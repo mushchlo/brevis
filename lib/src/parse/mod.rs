@@ -110,7 +110,7 @@ impl TokenStream {
 		}
 
 		Expr {
-			val: ExprVal::BlockNode(parsed),
+			val: ExprVal::Block(parsed),
 			loc: SourceLoc::new(SourcePos::new(), end_loc),
 			r#type: get_type_var(),
 		}
@@ -119,7 +119,7 @@ impl TokenStream {
 	fn parse_node(&mut self) -> Expr {
 		let atom = self.parse_atom();
 		self.maybe_call(|s| match &atom.val {
-			ExprVal::LetNode(_) => atom.clone(),
+			ExprVal::Let(_) => atom.clone(),
 			_ => s.maybe_binary(atom.clone(), -1),
 		})
 	}
@@ -146,7 +146,7 @@ impl TokenStream {
 	}
 
 	fn maybe_binary(&mut self, left_expr: Expr, prev_prec: i8) -> Expr {
-		use self::ExprVal::BinaryNode;
+		use self::ExprVal::Binary;
 
 		if let Some(op_tok) = self.peek() {
 			match op_tok.val {
@@ -159,7 +159,7 @@ impl TokenStream {
 					let right_expr = self.parse_expr();
 					let parsed = new_expr(
 						left_expr.loc.join(right_expr.loc),
-						ExprVal::CallNode(ast::Call {
+						ExprVal::Call(ast::Call {
 							func: box f,
 							args: VecDeque::from([ left_expr, right_expr ]),
 						})
@@ -187,7 +187,7 @@ impl TokenStream {
 												s.skip_token(Ident(member.clone()));
 												new_expr(
 													operand_tok.loc,
-													ExprVal::VarNode(ast::Variable {
+													ExprVal::Var(ast::Variable {
 														name: member.clone(),
 														generics: HashMap::new(),
 													})
@@ -210,12 +210,12 @@ impl TokenStream {
 							match &right_expr.val {
 							// TODO: This is a hack to fix call parsing being messed up in the case
 							// of a member access. Fix this on a higher level.
-								ExprVal::CallNode(c) if curr_op == Member => {
-									ExprVal::CallNode(ast::Call {
+								ExprVal::Call(c) if curr_op == Member => {
+									ExprVal::Call(ast::Call {
 										args: c.args.clone(),
 										func: box new_expr(
 											SourceLoc::new(left_expr.loc.start, right_expr.loc.start.index),
-											BinaryNode(ast::Binary {
+											Binary(ast::Binary {
 												left: box left_expr,
 												right: c.func.clone(),
 												op: curr_op,
@@ -225,7 +225,7 @@ impl TokenStream {
 									})
 								}
 								_ =>
-									BinaryNode(ast::Binary {
+									Binary(ast::Binary {
 										left: Box::new(left_expr),
 										right: Box::new(right_expr),
 										op: curr_op,
@@ -272,12 +272,12 @@ impl TokenStream {
 				},
 				Literal(l) => {
 					s.skip_token(Literal(l.clone()));
-					new_expr(loc, ExprVal::LiteralNode(AtomicLiteral(l)))
+					new_expr(loc, ExprVal::Literal(AtomicLiteral(l)))
 				}
 				Ident(_) => {
 					let id = s.parse_id();
 					Expr {
-						val: ExprVal::VarNode(
+						val: ExprVal::Var(
 							ast::Variable {
 								name: id.clone(),
 								generics: HashMap::new(),
@@ -309,7 +309,7 @@ impl TokenStream {
 
 		Expr {
 			val:
-				ExprVal::LetNode(ast::Let {
+				ExprVal::Let(ast::Let {
 					declared,
 					def,
 				}),
@@ -449,7 +449,7 @@ impl TokenStream {
 
 		new_expr(
 			SourceLoc::new(begin_pos, end_pos),
-			ExprVal::IfNode(parsed)
+			ExprVal::If(parsed)
 		)
 	}
 
@@ -465,7 +465,7 @@ impl TokenStream {
 			1 => parsed.front().unwrap().clone(),
 			_ => new_expr(
 				block_loc,
-				ExprVal::BlockNode(parsed)
+				ExprVal::Block(parsed)
 			),
 		}
 	}
@@ -492,7 +492,7 @@ impl TokenStream {
 
 		new_expr(
 			struct_loc,
-			ExprVal::LiteralNode(
+			ExprVal::Literal(
 				StructLiteral(struct_args.into())
 			)
 		)
@@ -530,7 +530,7 @@ impl TokenStream {
 
 		Expr {
 			loc: begin_loc.join(lambda_val.body.loc),
-			val: ExprVal::LambdaNode(lambda_val),
+			val: ExprVal::Lambda(lambda_val),
 			r#type: fn_type,
 		}
 	}
@@ -549,7 +549,7 @@ impl TokenStream {
 		};
 		new_expr(
 			loc,
-			ExprVal::CallNode(call_val)
+			ExprVal::Call(call_val)
 		)
 	}
 
@@ -570,7 +570,7 @@ impl TokenStream {
 		let expr = box self.parse_atom();
 		new_expr(
 			op_loc.join(expr.loc),
-			ExprVal::UnaryNode(ast::Unary {
+			ExprVal::Unary(ast::Unary {
 				op,
 				op_loc,
 				expr,
@@ -750,7 +750,7 @@ pub fn get_type_var_id() -> TypeVarId {
 }
 
 pub fn get_type_var() -> Type {
-	Type::TypeVar(get_type_var_id())
+	Type::Free(get_type_var_id())
 }
 
 fn new_expr(loc: SourceLoc, value: ExprVal) -> Expr {

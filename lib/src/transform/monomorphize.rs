@@ -53,11 +53,11 @@ impl Expr {
 			let mut monomorphized_fns = monomorphized_fns.lock().unwrap();
 
 			match &mut e.val {
-				BlockNode(_) => {
+				Block(_) => {
 					fns.push(HashMap::new());
 				}
 
-				VarNode(ref mut v) => {
+				Var(v) => {
 					if !v.generics.is_empty() && !core_vals.contains_key(&v.name) {
 						let generics = v.generics.clone();
 						let mono_fn_name =
@@ -86,7 +86,7 @@ impl Expr {
 			let mut fns = fns.lock().unwrap();
 			let mut monomorphized_fns = monomorphized_fns.lock().unwrap();
 			match &mut e.val {
-				LetNode(ref mut l) => {
+				Let(l) => {
 					match &l.def.r#type {
 						Type::Forall(generics, _) if !generics.is_empty() => {
 							fns.insert_in_env(
@@ -98,7 +98,7 @@ impl Expr {
 					}
 				}
 
-				BlockNode(ref mut b) => {
+				Block(b) => {
 					let local_fn_declarations = fns.pop().unwrap();
 
 					let mut monomorphized_defs = monomorphized_fns.iter_mut()
@@ -115,7 +115,7 @@ impl Expr {
 
 							Expr {
 								val:
-									LetNode(Let {
+									Let(Let {
 										declared: Pattern::Assignee(Parameter {
 											name: monomorphized_name.clone(),
 											mutable: false,

@@ -23,7 +23,7 @@ pub fn desugar(e: &mut Expr) {
 fn desugar_assignment_patterns(e: &mut Expr) {
 	use self::Pattern::*;
 	let desugarer = |ex: &mut Expr| {
-		if let ExprVal::LetNode(l) = &mut ex.val {
+		if let ExprVal::Let(l) = &mut ex.val {
 			match l.declared.clone() {
 				Assignee(_) | Literal(_) | Empty(_) => {}
 
@@ -33,7 +33,7 @@ fn desugar_assignment_patterns(e: &mut Expr) {
 						r#type: Type::Func(
 							args.iter().map(|arg| &arg.r#type).chain(iter::once(&l.def.r#type)).cloned().collect()
 						),
-						val: ExprVal::LambdaNode(Lambda {
+						val: ExprVal::Lambda(Lambda {
 							args: VecDeque::from(args.clone()),
 							captured: HashSet::new(),
 							body: l.def.clone(),

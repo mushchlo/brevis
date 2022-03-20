@@ -35,7 +35,7 @@ use crate::{
 		Mutability,
 	},
 	lex::tok::{
-		LiteralVal::*,
+		LiteralVal,
 		OpID,
 	},
 	parse::get_type_var,
@@ -77,7 +77,7 @@ impl Inference {
 
 	fn infer(&mut self, expr: Expr, constraints: &mut Vec<Constraint>) -> Expr {
 		let new_expr_val = match expr.val.clone() {
-			ExprVal::LiteralNode(StructLiteral(s)) => {
+			ExprVal::Literal(StructLiteral(s)) => {
 				let inferred_struct =
 					s.iter()
 						.map(|a|
@@ -99,7 +99,7 @@ impl Inference {
 							.collect()
 					);
 				let new_struct = Expr {
-					val: ExprVal::LiteralNode(StructLiteral(inferred_struct)),
+					val: ExprVal::Literal(StructLiteral(inferred_struct)),
 					loc: expr.loc,
 					r#type: new_struct_t,
 				};
@@ -108,26 +108,26 @@ impl Inference {
 				new_struct.val
 			}
 
-			ExprVal::LiteralNode(AtomicLiteral(lit)) => {
+			ExprVal::Literal(AtomicLiteral(lit)) => {
 				let mut new_lit = expr.clone();
 				new_lit.r#type = match lit.val {
-					StrLit(_) => Str,
-					IntLit(_) => Int,
-					FltLit(_) => Float,
-					BoolLit(_) => Bool,
+					LiteralVal::Str(_) => Str,
+					LiteralVal::Int(_) => Int,
+					LiteralVal::Flt(_) => Float,
+					LiteralVal::Bool(_) => Bool,
 				};
 				constraints.push(mk_eq(&new_lit, &expr));
 
-				ExprVal::LiteralNode(AtomicLiteral(lit))
+				ExprVal::Literal(AtomicLiteral(lit))
 			}
 
-			ExprVal::UnaryNode(u) => {
+			ExprVal::Unary(u) => {
 				let mut op_constraints = u.associations(&expr);
 				let new_operand = self.infer(*u.expr.clone(), constraints);
 				constraints.push(mk_eq(&new_operand, &u.expr));
 				constraints.append(&mut op_constraints);
 
-				ExprVal::UnaryNode(
+				ExprVal::Unary(
 					Unary {
 						expr: box new_operand,
 						op: u.op,
@@ -136,7 +136,7 @@ impl Inference {
 				)
 			}
 
-			ExprVal::BinaryNode(b) if b.op == OpID::Member => {
+			ExprVal::Binary(b) if b.op == OpID::Member => {
 				let new_left = self.infer(*b.left.clone(), constraints);
 
 				constraints.push(mk_eq(&new_left, &b.left));
@@ -144,7 +144,7 @@ impl Inference {
 				let mut op_constraints = b.associations(&expr);
 				constraints.append(&mut op_constraints);
 
-				ExprVal::BinaryNode(
+				ExprVal::Binary(
 					Binary {
 						op: b.op,
 						op_loc: b.op_loc,
@@ -154,7 +154,7 @@ impl Inference {
 				)
 			}
 
-			ExprVal::BinaryNode(b) => {
+			ExprVal::Binary(b) => {
 				let (new_left, new_right) = (
 					self.infer(*b.left.clone(), constraints),
 					self.infer(*b.right.clone(), constraints)
@@ -166,7 +166,7 @@ impl Inference {
 				let mut op_constraints = b.associations(&expr);
 				constraints.append(&mut op_constraints);
 
-				ExprVal::BinaryNode(
+				ExprVal::Binary(
 					Binary {
 						op: b.op,
 						op_loc: b.op_loc,
@@ -176,7 +176,7 @@ impl Inference {
 				)
 			}
 
-			ExprVal::BlockNode(b) => {
+			ExprVal::Block(b) => {
 				self.env.new_stack();
 
 				let mut new_block = b;
@@ -184,7 +184,7 @@ impl Inference {
 			// generalization and substitution of definitions until after. This properly
 			// infers variables that are used in declarations before they are constrained.
 				for line in &mut new_block {
-					if let ExprVal::LetNode(l) = &line.val {
+					if let ExprVal::Let(l) = &line.val {
 						for declared in l.declared.assignees() {
 							self.env.insert_in_env(declared.name.clone(), declared.r#type.clone());
 						}
@@ -199,10 +199,10 @@ impl Inference {
 					constraints.push(mk_eq(last_line, &expr));
 				}
 
-				ExprVal::BlockNode(new_block)
+				ExprVal::Block(new_block)
 			}
 
-			ExprVal::LetNode(mut l) => {
+			ExprVal::Let(mut l) => {
 			// The declared variables need to be placed prematurely in the environment, in case
 			// the definition is a recursive function. After inferring the definition, the declared
 			// variable is reinserted into the environment, with its inferred type.
@@ -231,15 +231,15 @@ impl Inference {
 				constraints.push(mk_eq(
 					&expr,
 					&Expr {
-						val: ExprVal::LetNode(l.clone()),
+						val: ExprVal::Let(l.clone()),
 						r#type: Void,
 						loc: expr.loc,
 					}
 				));
-				ExprVal::LetNode(l)
+				ExprVal::Let(l)
 			}
 
-			ExprVal::IfNode(i) => {
+			ExprVal::If(i) => {
 				let new_then = self.infer(*i.then.clone(), constraints);
 				let new_cond = self.infer(*i.cond.clone(), constraints);
 				let new_else = i.r#else.map(|box else_expr| {
@@ -265,7 +265,7 @@ impl Inference {
 					)
 				);
 
-				ExprVal::IfNode(
+				ExprVal::If(
 					IfElse {
 						then: box new_then,
 						cond: box new_cond,
@@ -274,7 +274,7 @@ impl Inference {
 				)
 			}
 
-			ExprVal::VarNode(v) => {
+			ExprVal::Var(v) => {
 				let var_t = self.env.find(&v.name).cloned()
 					.unwrap_or_else(||
 						panic!("unable to find variable {:#?} in the environment when inferring types, env looks like {:#?}",
@@ -283,7 +283,7 @@ impl Inference {
 						)
 					);
 				let (r#type, generics) = instantiate(&var_t, &self.substitutions);
-				let val = ExprVal::VarNode(Variable {
+				let val = ExprVal::Var(Variable {
 					name: v.name,
 					generics,
 				});
@@ -295,7 +295,7 @@ impl Inference {
 				new_expr.val
 			}
 
-			ExprVal::LambdaNode(l) => {
+			ExprVal::Lambda(l) => {
 				self.env.new_stack();
 				for arg in l.args.iter() {
 					self.env.insert_in_env(arg.name.clone(), arg.r#type.clone());
@@ -325,16 +325,16 @@ impl Inference {
 				constraints.push(mk_eq(
 					&expr,
 					&Expr {
-						val: ExprVal::LambdaNode(new_lambda.clone()),
+						val: ExprVal::Lambda(new_lambda.clone()),
 						r#type: new_fn_t,
 						loc: expr.loc,
 					}
 				));
 
-				ExprVal::LambdaNode(new_lambda)
+				ExprVal::Lambda(new_lambda)
 			}
 
-			ExprVal::CallNode(c) => {
+			ExprVal::Call(c) => {
 				let args_t = c.args.clone().into_iter().map(|arg| arg.r#type);
 				let fn_t = Func(
 					args_t.clone().chain(iter::once(expr.r#type.clone())).collect()
@@ -359,7 +359,7 @@ impl Inference {
 					))
 					.collect();
 
-				ExprVal::CallNode(Call { func, args })
+				ExprVal::Call(Call { func, args })
 			}
 		};
 
@@ -432,14 +432,14 @@ pub fn substitute(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> Type {
 		Pointer(box r, mutable) =>
 			Pointer(box substitute(substitutions, r), *mutable),
 
-		TypeVar(v) if substitutions.contains_key(v) =>
+		Free(v) if substitutions.contains_key(v) =>
 			substitute(
 				substitutions,
 				substitutions.get(v)
 					.unwrap_or_else(|| unreachable!())
 			),
 
-		TypeVar(v) => TypeVar(*v),
+		Free(v) => Free(*v),
 		Func(args_t) => Func(
 			args_t.iter()
 				.map(|t1| substitute(substitutions, t1))
@@ -482,7 +482,7 @@ pub fn substitute_mutability(substitutions: &HashMap<TypeVarId, Mutability>, t: 
 			Pointer(box substitute_mutability(substitutions, r), Mutability::Immutable),
 		Pointer(box r, mutable) =>
 			Pointer(box substitute_mutability(substitutions, r), *mutable),
-		TypeVar(v) => TypeVar(*v),
+		Free(v) => Free(*v),
 		Func(args_t) => Func(
 			args_t.iter()
 				.map(|t1| substitute_mutability(substitutions, t1))
@@ -586,18 +586,18 @@ fn unify(
 			recurse!(generic_t1, generic_t2, origins);
 		}
 
-		(TypeVar(i), TypeVar(j)) if i == j => {}
-		(TypeVar(i), t) | (t, TypeVar(i)) if substitutions.contains_key(i) => {
+		(Free(i), Free(j)) if i == j => {}
+		(Free(i), t) | (t, Free(i)) if substitutions.contains_key(i) => {
 			let substituted = substitutions[i].clone();
 			recurse!(t, &substituted, origins);
 		}
 
-		(TypeVar(i), t) | (t, TypeVar(i)) => {
+		(Free(i), t) | (t, Free(i)) => {
 			if occurs_in(substitutions, *i, t) {
 				errors.insert(ErrorMessage {
 					msg: format!("types `{}` and `{}`, expected to be the same due to the following lines, are recursive.",
 						substitute(substitutions, t),
-						TypeVar(*i)
+						Free(*i)
 					),
 					origins: vec![ origins.0, origins.1 ],
 				});
@@ -625,10 +625,10 @@ fn occurs_in(substitutions: &HashMap<TypeVarId, Type>, index: TypeVarId, t: &Typ
 		Pointer(box p, _) =>
 			occurs_in(substitutions, index, p),
 
-		TypeVar(i) if substitutions.contains_key(i) =>
+		Free(i) if substitutions.contains_key(i) =>
 			occurs_in(substitutions, index, &substitutions[i].clone()),
 
-		TypeVar(i) => *i == index,
+		Free(i) => *i == index,
 
 		Struct(s) => s.iter().any(|a| occurs_in(substitutions, index, &a.r#type)),
 
@@ -653,9 +653,9 @@ pub fn free_in_type(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> HashS
 	match t {
 		Void | Int | Float | Str | Bool =>
 			HashSet::new(),
-		TypeVar(i) if substitutions.contains_key(i) =>
+		Free(i) if substitutions.contains_key(i) =>
 			free_in_type(substitutions, &substitutions[i]),
-		TypeVar(i) =>
+		Free(i) =>
 			HashSet::from([*i]),
 		Pointer(box r, _) =>
 			free_in_type(substitutions, r),
@@ -684,9 +684,9 @@ pub fn generics_in_type(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> H
 	match t {
 		Void | Int | Float | Str | Bool =>
 			HashSet::new(),
-		TypeVar(i) if substitutions.contains_key(i) =>
+		Free(i) if substitutions.contains_key(i) =>
 			generics_in_type(substitutions, &substitutions[i]),
-		TypeVar(_) =>
+		Free(_) =>
 			HashSet::new(),
 		Pointer(box r, _) =>
 			generics_in_type(substitutions, r),
@@ -730,7 +730,7 @@ impl Expr {
 			Some(&error_messages)
 		);
 		let post_trans = |e: &mut Expr| {
-			if let ExprVal::BlockNode(_) = e.val {
+			if let ExprVal::Block(_) = e.val {
 				typevar_env.lock().unwrap().pop();
 			}
 		};
@@ -764,11 +764,8 @@ pub fn annotate_helper<'a>(
 			}
 		}
 		match &mut e.val {
-			ExprVal::LetNode(Let {
-				ref mut declared,
-				def: ref mut expr
-			}) => {
-				if let Forall(generics, _) = &expr.r#type {
+			ExprVal::Let(Let { declared, def }) => {
+				if let Forall(generics, _) = &def.r#type {
 					if let Some(env) = &typevar_env {
 						let mut env = env.lock().unwrap();
 						for generic in generics {
@@ -780,27 +777,27 @@ pub fn annotate_helper<'a>(
 				declared.infer_as(
 					generalize(substitute(
 						substitutions,
-						&expr.r#type
+						&def.r#type
 					)),
-					expr.loc,
+					def.loc,
 					&mut HashSet::new()
 				);
 			}
 
-			ExprVal::BlockNode(_) => {
+			ExprVal::Block(_) => {
 				if let Some(env) = &typevar_env {
 					let mut env = env.lock().unwrap();
 					env.push(Vec::new());
 				}
 			}
 
-			ExprVal::VarNode(ref mut v) => {
+			ExprVal::Var(v) => {
 				for generic_t in v.generics.values_mut() {
 					*generic_t = substitute(substitutions, generic_t);
 				}
 			}
 
-			ExprVal::LambdaNode(ref mut lam) => {
+			ExprVal::Lambda(lam) => {
 				lam.captured = lam.captured.drain().map(|mut captured| {
 					captured.r#type = generalize(substitute(substitutions, &captured.r#type));
 					captured

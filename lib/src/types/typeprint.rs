@@ -34,7 +34,7 @@ pub fn name_of(t: &Type) -> String {
 		Str => " string".to_string(),
 		Bool => " boolean".to_string(),
 		Forall(_, sub_t) => format!(" generic{}", name_of(sub_t)),
-		TypeVar(_) => " generic value".to_string(),
+		Free(_) => " generic value".to_string(),
 		Struct(_) => " structure".to_string(),
 		Pointer(r, Immutable) | Pointer(r, Unknown(_)) => format!(" reference to a{}", name_of(r)),
 		Pointer(r, Mutable) => format!(" mutable reference to a{}", name_of(r)),
@@ -52,12 +52,12 @@ fn display_type(t: &Type, generic_names: &mut HashMap<TypeVarId, char>) -> Strin
 		Forall(args, sub_t) =>
 			format!("forall {} => {}",
 				args.iter()
-					.map(|&tv| display_type(&TypeVar(tv), generic_names))
+					.map(|&tv| display_type(&Free(tv), generic_names))
 					.reduce(|acc, next| acc + ", " + &next)
 					.unwrap_or_else(|| "".to_string()),
 				display_type(sub_t, generic_names)
 			),
-		TypeVar(v) => {
+		Free(v) => {
 			let generic_names_copy = generic_names.clone();
 			let entry = generic_names.entry(*v);
 			let name = entry.or_insert_with(||

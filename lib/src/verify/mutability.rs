@@ -27,28 +27,28 @@ pub fn verify_mutability(to_verify: &Expr) -> HashSet<ErrorMessage> {
 		let mut errs = errs.lock().unwrap();
 		let mutability_env = &mut *mutability_env.lock().unwrap();
 		match &e.val {
-			ExprVal::BlockNode(_) => {
+			ExprVal::Block(_) => {
 				mutability_env.new_stack();
 			}
 
-			ExprVal::LetNode(l) => {
+			ExprVal::Let(l) => {
 				for declared in l.declared.assignees() {
 					mutability_env.insert_in_env(declared.name.clone(), declared.clone());
 				}
 			}
 
-			ExprVal::LambdaNode(l) => {
+			ExprVal::Lambda(l) => {
 				mutability_env.new_stack();
 				for arg in &l.args {
 					mutability_env.insert_in_env(arg.name.clone(), arg.clone());
 				}
 			}
 
-			ExprVal::UnaryNode(u) if u.op == UOpID::Ref(true) => {
+			ExprVal::Unary(u) if u.op == UOpID::Ref(true) => {
 				assert_mutable(&u.expr, mutability_env, &mut errs);
 			}
 
-			ExprVal::BinaryNode(b) if b.op == OpID::Eq => {
+			ExprVal::Binary(b) if b.op == OpID::Eq => {
 				assert_mutable(&b.left, mutability_env, &mut errs);
 			}
 
@@ -61,7 +61,7 @@ pub fn verify_mutability(to_verify: &Expr) -> HashSet<ErrorMessage> {
 	let manage_env = |e: &Expr| {
 		let mut mutability_env = mutability_env.lock().unwrap();
 		match &e.val {
-			ExprVal::BlockNode(_) | ExprVal::LambdaNode(_) => {
+			ExprVal::Block(_) | ExprVal::Lambda(_) => {
 				mutability_env.pop();
 			}
 
@@ -83,7 +83,7 @@ fn assert_mutable(
 
 	let asserter = |e: &Expr| {
 		match &e.val {
-			VarNode(v) => {
+			Var(v) => {
 				let var_declaration = mut_env.find(&v.name).unwrap();
 				if !var_declaration.mutable {
 					push_err!(
@@ -97,7 +97,7 @@ fn assert_mutable(
 				true
 			}
 
-			UnaryNode(u) if u.op == UOpID::At => false,
+			Unary(u) if u.op == UOpID::At => false,
 
 			_ => true,
 		}

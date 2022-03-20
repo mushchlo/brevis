@@ -32,7 +32,7 @@ pub enum Type {
 // A type generic over these arguments
 	Forall(Vec<TypeVarId>, Box<Type>),
 
-	TypeVar(TypeVarId),
+	Free(TypeVarId),
 }
 
 #[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash, PartialOrd, Ord)]

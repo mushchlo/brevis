@@ -38,17 +38,17 @@ pub struct Expr {
 
 #[derive(Clone, Debug)]
 pub enum ExprVal {
-	LiteralNode(Literal),
+	Literal(Literal),
 
-	LetNode(Let),
-	VarNode(Variable),
-	BlockNode(VecDeque<Expr>),
-	LambdaNode(Lambda),
-	IfNode(IfElse),
+	Let(Let),
+	Var(Variable),
+	Block(VecDeque<Expr>),
+	Lambda(Lambda),
+	If(IfElse),
 
-	UnaryNode(Unary),
-	BinaryNode(Binary),
-	CallNode(Call),
+	Unary(Unary),
+	Binary(Binary),
+	Call(Call),
 }
 
 #[derive(Clone, Debug)]
@@ -210,10 +210,10 @@ impl Pattern {
 				).collect()),
 			Literal(lit) =>
 				match lit.val {
-					LiteralVal::StrLit(_) => Type::Str,
-					LiteralVal::IntLit(_) => Type::Int,
-					LiteralVal::FltLit(_) => Type::Float,
-					LiteralVal::BoolLit(_) => Type::Bool,
+					LiteralVal::Str(_) => Type::Str,
+					LiteralVal::Int(_) => Type::Int,
+					LiteralVal::Flt(_) => Type::Float,
+					LiteralVal::Bool(_) => Type::Bool,
 				},
 			Empty(_) => get_type_var(),
 		}
@@ -245,8 +245,6 @@ impl Expr {
 	where E: Copy + FnMut(&mut Self) -> bool,
 		T: Copy + FnMut(&mut Self)
 	{
-		use self::ExprVal::*;
-
 		macro_rules! recurse {
 			($to_trans:expr) => {
 				$to_trans.transform(trans, post_trans)
@@ -256,29 +254,29 @@ impl Expr {
 		if trans(self) {
 			match &mut self.val {
 			// Dead ends, all done!
-				LiteralNode(Literal::AtomicLiteral(_)) | VarNode(_) => {},
+				ExprVal::Literal(Literal::AtomicLiteral(_)) | ExprVal::Var(_) => {},
 
-				LiteralNode(Literal::StructLiteral(s)) => {
+				ExprVal::Literal(Literal::StructLiteral(s)) => {
 					for agg in s {
 						recurse!(&mut agg.val);
 					}
 				}
 
-				BlockNode(b) => {
+				ExprVal::Block(b) => {
 					for line in b.iter_mut() {
 						recurse!(line);
 					}
 				}
 
-				LetNode(l) => {
+				ExprVal::Let(l) => {
 					recurse!(&mut l.def);
 				}
 
-				LambdaNode(lam) => {
+				ExprVal::Lambda(lam) => {
 					recurse!(&mut lam.body);
 				}
 
-				IfNode(ifelse) => {
+				ExprVal::If(ifelse) => {
 					recurse!(&mut ifelse.cond);
 					recurse!(&mut ifelse.then);
 					if let Some(box e) = &mut ifelse.r#else {
@@ -286,16 +284,16 @@ impl Expr {
 					}
 				}
 
-				UnaryNode(u) => {
+				ExprVal::Unary(u) => {
 					recurse!(&mut u.expr);
 				}
 
-				BinaryNode(b) => {
+				ExprVal::Binary(b) => {
 					recurse!(&mut b.right);
 					recurse!(&mut b.left);
 				}
 
-				CallNode(c) => {
+				ExprVal::Call(c) => {
 					recurse!(&mut c.func);
 					for arg in &mut c.args {
 						recurse!(arg);
@@ -328,56 +326,53 @@ impl Expr {
 	pub fn describe(&self) -> &str {
 		use self::ExprVal::*;
 		use self::Literal::*;
-		use lex::tok::LiteralVal::*;
 
 		match &self.val {
-			LiteralNode(AtomicLiteral(atom)) =>
+			Literal(AtomicLiteral(atom)) =>
 				match &atom.val {
-					IntLit(_) => "an integer literal",
-					StrLit(_) => "a string literal",
-					FltLit(_) => "a floating-point literal",
-					BoolLit(_) => "a boolean literal",
+					LiteralVal::Int(_) => "an integer literal",
+					LiteralVal::Str(_) => "a string literal",
+					LiteralVal::Flt(_) => "a floating-point literal",
+					LiteralVal::Bool(_) => "a boolean literal",
 				},
-			LiteralNode(StructLiteral(_)) => "a structure literal",
-			LetNode(_) => "a declaration",
-			VarNode(_) => "a variable",
-			BlockNode(_) => "a block",
-			LambdaNode(_) => "a function",
-			IfNode(ifelse) if ifelse.r#else.is_some() => "an if-else-expression",
-			IfNode(_) => "an if-expression",
-			UnaryNode(_) => "a unary expression",
-			BinaryNode(_) => "a binary expression",
-			CallNode(_) => "a function call",
+			Literal(StructLiteral(_)) => "a structure literal",
+			Let(_) => "a declaration",
+			Var(_) => "a variable",
+			Block(_) => "a block",
+			Lambda(_) => "a function",
+			If(ifelse) if ifelse.r#else.is_some() => "an if-else-expression",
+			If(_) => "an if-expression",
+			Unary(_) => "a unary expression",
+			Binary(_) => "a binary expression",
+			Call(_) => "a function call",
 		}
 	}
 
 // Returns references to the shallowest amount of descendents,
 // in visiting order when popping from the stack.
 	fn descendents(&self) -> Vec<&Self> {
-		use self::ExprVal::*;
-
 		match &self.val {
 			// Dead ends, all done!
-			LiteralNode(Literal::AtomicLiteral(_)) | VarNode(_) => Vec::new(),
+			ExprVal::Literal(Literal::AtomicLiteral(_)) | ExprVal::Var(_) => Vec::new(),
 
-			LiteralNode(Literal::StructLiteral(s)) => s.iter().map(|agg| &agg.val).collect(),
+			ExprVal::Literal(Literal::StructLiteral(s)) => s.iter().map(|agg| &agg.val).collect(),
 
-			BlockNode(b) => b.iter().rev().collect(),
+			ExprVal::Block(b) => b.iter().rev().collect(),
 
-			LetNode(l) => vec![ &l.def ],
+			ExprVal::Let(l) => vec![ &l.def ],
 
-			LambdaNode(lam) => vec![ &lam.body ],
+			ExprVal::Lambda(lam) => vec![ &lam.body ],
 
-			IfNode(ifelse) =>
+			ExprVal::If(ifelse) =>
 				IntoIterator::into_iter([ ifelse.cond.as_ref(), ifelse.then.as_ref() ])
 					.chain(ifelse.r#else.as_ref().iter().map(|&e| e.as_ref()))
 					.collect(),
 
-			UnaryNode(u) => vec![ &u.expr ],
+			ExprVal::Unary(u) => vec![ &u.expr ],
 
-			BinaryNode(b) => vec![ &b.right, &b.left ],
+			ExprVal::Binary(b) => vec![ &b.right, &b.left ],
 
-			CallNode(c) =>
+			ExprVal::Call(c) =>
 				iter::once(&*c.func)
 					.chain(c.args.iter())
 					.collect(),
