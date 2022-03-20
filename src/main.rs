@@ -74,7 +74,12 @@ mod tests {
 					.expect("failed to find output file");
 
 			let compiled_c =
-				brevislib::compile(fs::read_to_string(file.clone() + ".bv").unwrap(), core::CORE_FNS_POSIX, "c");
+				brevislib::compile(
+					&fs::read_to_string(file.clone() + ".bv").unwrap(),
+					core::CORE_FNS_POSIX,
+					"c",
+					|e| eprintln!("{}", e),
+				);
 
 
 			let mut gcc_out = BufReader::new(gcc.stdout.take().unwrap());
