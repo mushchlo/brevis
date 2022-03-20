@@ -11,7 +11,9 @@ use crate::{
 	types::{
 		Type,
 		Type::*,
+		TypeVarId,
 		AggregateType,
+		Mutability
 	},
 	lex::{
 		TokenStream,
@@ -555,18 +557,14 @@ impl TokenStream {
 		let op_loc = self.peek().unwrap().loc;
 		self.skip_token(UnaryOp(op));
 
-		match &mut op {
-			Ref(mutable) => {
-				*mutable = match self.peek().map(|t| t.val) {
-					Some(KeyWord(KeyWord::Mut)) => {
-						self.next();
-						true
-					}
-					_ => false,
-				};
-			}
-
-			_ => {}
+		if let Ref(mutable) = &mut op {
+			*mutable = match self.peek().map(|t| t.val) {
+				Some(KeyWord(KeyWord::Mut)) => {
+					self.next();
+					true
+				}
+				_ => false,
+			};
 		}
 
 		let expr = box self.parse_atom();
@@ -660,14 +658,14 @@ impl TokenStream {
 				}
 
 				UnaryOp(Ref(_)) => {
-					let mutable_ref = match self.peek().map(|t| t.val) {
+					let mutable = match self.peek().map(|t| t.val) {
 						Some(KeyWord(KeyWord::Mut)) => {
 							self.next();
-							true
+							Mutability::Mutable
 						}
-						_ => false,
+						_ => Mutability::Immutable,
 					};
-					Type::Pointer(box self.parse_type(), mutable_ref)
+					Type::Pointer(box self.parse_type(), mutable)
 				}
 
 				non_type => panic!("expected type at {}, received {:?}", tok.loc.start, non_type),
@@ -693,7 +691,7 @@ impl TokenStream {
 			}
 
 		// Either variable match or function pattern
-			Ident(_) => {
+			Ident(_) | KeyWord(KeyWord::Mut) => {
 				let var = self.declare_var();
 				if self.peek().map(|t| t.val) == Some(Punc('(')) {
 					let args = Vec::from(
@@ -747,8 +745,12 @@ fn precedence(id: OpID) -> i8 {
 	}
 }
 
+pub fn get_type_var_id() -> TypeVarId {
+	TYPE_VAR_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
 pub fn get_type_var() -> Type {
-	Type::TypeVar(TYPE_VAR_COUNTER.fetch_add(1, Ordering::SeqCst))
+	Type::TypeVar(get_type_var_id())
 }
 
 fn new_expr(loc: SourceLoc, value: ExprVal) -> Expr {

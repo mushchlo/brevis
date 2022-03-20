@@ -24,8 +24,8 @@ pub enum Type {
 
 	// Union(Vec<Aggregate>),
 	Struct(Vec<AggregateType>),
-// Boolean represents mutability.
-	Pointer(Box<Type>, bool),
+
+	Pointer(Box<Type>, Mutability),
 // The argument types, ending with the return type
 	Func(Vec<Type>),
 
@@ -39,4 +39,11 @@ pub enum Type {
 pub struct AggregateType {
 	pub name: String,
 	pub r#type: Type,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, std::cmp::Eq, Hash, PartialOrd, Ord)]
+pub enum Mutability {
+	Unknown(TypeVarId),
+	Mutable,
+	Immutable,
 }

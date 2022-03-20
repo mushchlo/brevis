@@ -4,11 +4,24 @@ use crate::types::{
 	Type,
 	Type::*,
 	TypeVarId,
+	Mutability,
+	Mutability::*,
 };
 
 impl std::fmt::Display for Type {
 	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
 		write!(f, "{}", display_type(self, &mut HashMap::new()))
+	}
+}
+
+impl std::fmt::Display for Mutability {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+		write!(f, "{}",
+			match self {
+				Mutable => "mutable",
+				_ => "immutable",
+			}
+		)
 	}
 }
 
@@ -20,11 +33,11 @@ pub fn name_of(t: &Type) -> String {
 		Float => " floating-point number".to_string(),
 		Str => " string".to_string(),
 		Bool => " boolean".to_string(),
-		Forall(_, sub_t) => format!(" generic {}", name_of(sub_t)),
+		Forall(_, sub_t) => format!(" generic{}", name_of(sub_t)),
 		TypeVar(_) => " generic value".to_string(),
 		Struct(_) => " structure".to_string(),
-		Pointer(_, false) => " pointer to a".to_string(),
-		Pointer(_, true) => " pointer to a mutable".to_string(),
+		Pointer(r, Immutable) | Pointer(r, Unknown(_)) => format!(" reference to a{}", name_of(r)),
+		Pointer(r, Mutable) => format!(" mutable reference to a{}", name_of(r)),
 		Func(_) => " function".to_string(),
 	}
 }
@@ -60,7 +73,7 @@ fn display_type(t: &Type, generic_names: &mut HashMap<TypeVarId, char>) -> Strin
 		}
 		Pointer(box pointed_t, mutable) =>
 			format!("&{}{}",
-				if *mutable { "mut" } else { "" },
+				if *mutable == Mutable { "mut " } else { "" },
 				display_type(pointed_t, generic_names)
 			),
 		Struct(s) =>

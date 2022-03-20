@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use crate::types::{
 	Type,
 	Type::*,
+	Mutability
 };
 use lazy_static::lazy_static;
 use parse::get_type_var;
@@ -22,7 +23,7 @@ lazy_static! {
 				let t = get_type_var();
 				vec![
 					Int,
-					Type::Pointer(box t, false)
+					Type::Pointer(box t, Mutability::Immutable)
 				]
 			}),
 		].iter().map(|(name, args)|

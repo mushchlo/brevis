@@ -13,6 +13,7 @@ use std::{
 };
 
 use crate::{
+	push_err,
 	parse::ast::{
 		Expr,
 		ExprVal,
@@ -31,6 +32,7 @@ use crate::{
 		Type::*,
 		TypeVarId,
 		AggregateType,
+		Mutability,
 	},
 	lex::tok::{
 		LiteralVal::*,
@@ -371,11 +373,12 @@ impl Inference {
 
 pub fn solve_constraints(constraints: &[Constraint], errors: &mut HashSet<ErrorMessage>) -> HashMap<TypeVarId, Type> {
 	let mut substitutions = HashMap::new();
+	let mut mutability_substitutions = HashMap::new();
 	let mut member_map = HashMap::new();
 	for constraint in constraints.iter() {
 		match constraint {
 			Constraint::Equal((t1, l1), (t2, l2)) => {
-				unify(&mut substitutions, errors, t1, t2, (*l1, *l2));
+				unify(&mut substitutions, &mut mutability_substitutions, errors, t1, t2, (*l1, *l2));
 			}
 
 			Constraint::HasMember((t, l1), (m, l2)) => {
@@ -394,9 +397,12 @@ pub fn solve_constraints(constraints: &[Constraint], errors: &mut HashSet<ErrorM
 		// proper trait.
 		let locs = members_locations.iter().map(|(_, locs)| *locs).next().unwrap();
 		let members = members_locations.into_iter().map(|(types, _)| types).collect();
-		unify(&mut substitutions, errors, t, &Struct(members), locs);
+		unify(&mut substitutions, &mut mutability_substitutions, errors, t, &Struct(members), locs);
 	}
 
+	for t in substitutions.values_mut() {
+		*t = substitute_mutability(&mutability_substitutions, t);
+	}
 	substitutions
 }
 
@@ -409,13 +415,7 @@ fn mk_eq(e1: &Expr, e2: &Expr) -> Constraint {
 
 // Flattens a Forall-quantified type, returning a type with free
 // typevars, and a hashmap of generic types to typevars.
-pub fn instantiate(t: &Type, substitutions: &HashMap<TypeVarId, Type>) -> (Type, HashMap<TypeVarId, Type>) {/*
-	match t {
-		TypeVar(v) if substitutions.contains(v) => substitutions[v],
-		Forall(type_vars, generic_type) => {
-			let map = type_vars.iter().map(|tv| (tv, get_type_var())).collect();
-
-*/
+pub fn instantiate(t: &Type, substitutions: &HashMap<TypeVarId, Type>) -> (Type, HashMap<TypeVarId, Type>) {
 	let instantiation = generics_in_type(substitutions, t).into_iter()
 		.zip(iter::repeat_with(get_type_var))
 		.collect();
@@ -467,14 +467,57 @@ pub fn substitute(substitutions: &HashMap<TypeVarId, Type>, t: &Type) -> Type {
 	}
 }
 
-// Unifies two types as equal, with origin being the locations that the types came from.
+pub fn substitute_mutability(substitutions: &HashMap<TypeVarId, Mutability>, t: &Type) -> Type {
+	match t {
+		Void => Void,
+		Int => Int,
+		Float => Float,
+		Str => Str,
+		Bool => Bool,
+		Pointer(box r, Mutability::Unknown(u)) if substitutions.contains_key(u) =>
+			Pointer(box substitute_mutability(substitutions, r), substitutions[u]),
+	// Referencing that doesn't use mutability and isn't otherwise constrained
+	// is assumed to be immutable; we try to be conservative about allowing mutability.
+		Pointer(box r, Mutability::Unknown(_)) =>
+			Pointer(box substitute_mutability(substitutions, r), Mutability::Immutable),
+		Pointer(box r, mutable) =>
+			Pointer(box substitute_mutability(substitutions, r), *mutable),
+		TypeVar(v) => TypeVar(*v),
+		Func(args_t) => Func(
+			args_t.iter()
+				.map(|t1| substitute_mutability(substitutions, t1))
+				.collect::<Vec<Type>>(),
+		),
+		Struct(s) => Struct(
+			s.iter().map(|a|
+				AggregateType {
+					name: a.name.clone(),
+					r#type: substitute_mutability(substitutions, &a.r#type),
+				}
+			).collect()
+		),
+		Forall(type_vars, box generic_t) =>
+			Forall(type_vars.clone(), box substitute_mutability(substitutions, generic_t)),
+	}
+}
+
+// Unifies two types as equal, with origins being the locations that the types came from.
 fn unify(
 	substitutions: &mut HashMap<TypeVarId, Type>,
+	mutability_substitutions: &mut HashMap<TypeVarId, Mutability>,
 	errors: &mut HashSet<ErrorMessage>,
 	t1: &Type,
 	t2: &Type,
 	origins: (SourceLoc, SourceLoc)
 ) {
+	use self::Mutability::*;
+
+	macro_rules! recurse {
+		($t1:expr, $t2:expr, $orig:expr) => {
+			unify(substitutions, mutability_substitutions, errors, $t1, $t2, $orig)
+		}
+	}
+
 	match (&t1, &t2) {
 		(Func(args1), Func(args2)) if args1.len() != args2.len() => {
 			errors.insert(ErrorMessage {
@@ -485,7 +528,7 @@ fn unify(
 
 		(Func(args1), Func(args2)) => {
 			for (t3, t4) in args1.iter().zip(args2.iter()) {
-				unify(substitutions, errors, t3, t4, origins);
+				recurse!(t3, t4, origins);
 			}
 		}
 
@@ -497,12 +540,37 @@ fn unify(
 			s2.sort();
 			for (a1, a2) in s1.iter().zip(s2.iter()) {
 				assert_eq!(a1.name, a2.name);
-				unify(substitutions, errors, &a1.r#type, &a2.r#type, origins);
+				recurse!(&a1.r#type, &a2.r#type, origins);
 			}
 		}
 
-		(Pointer(box r1, _), Pointer(box r2, _)) =>
-			unify(substitutions, errors, r1, r2, origins),
+		(Pointer(box r1, Unknown(m1)), Pointer(box r2, Unknown(m2))) if m1 == m2 => {
+			recurse!(r1, r2, origins);
+		}
+		(Pointer(box r1, Unknown(u)), Pointer(box r2, m2)) |
+		 (Pointer(box r2, m2), Pointer(box r1, Unknown(u)))
+		 if mutability_substitutions.contains_key(u) => {
+			recurse!(&Pointer(box r1.clone(), mutability_substitutions[u]), &Pointer(box r2.clone(), *m2), origins);
+		}
+		(Pointer(box r1, Unknown(u)), Pointer(box r2, m)) |
+		 (Pointer(box r2, m), Pointer(box r1, Unknown(u))) => {
+			mutability_substitutions.insert(*u, *m);
+			recurse!(r1, r2, origins);
+		}
+		(Pointer(box r1, m1), Pointer(box r2, m2)) => {
+			if m1 != m2 {
+				push_err!(
+					errors,
+					vec![ origins.0, origins.1 ],
+					"I expected the mutability of this {} and this {} to be the same, due to the following lines, but they were not ({} vs {})",
+					substitute(substitutions, &Pointer(box r1.clone(), *m1)),
+					substitute(substitutions, &Pointer(box r2.clone(), *m2)),
+					m1, m2
+				);
+			} else {
+				recurse!(r1, r2, origins);
+			}
+		}
 
 		(Forall(args1, generic_t1), Forall(args2, generic_t2)) => {
 			if args1.len() != args2.len() {
@@ -515,13 +583,13 @@ fn unify(
 				});
 				return;
 			}
-			unify(substitutions, errors, generic_t1, generic_t2, origins);
+			recurse!(generic_t1, generic_t2, origins);
 		}
 
 		(TypeVar(i), TypeVar(j)) if i == j => {}
 		(TypeVar(i), t) | (t, TypeVar(i)) if substitutions.contains_key(i) => {
 			let substituted = substitutions[i].clone();
-			unify(substitutions, errors, t, &substituted, origins)
+			recurse!(t, &substituted, origins);
 		}
 
 		(TypeVar(i), t) | (t, TypeVar(i)) => {
@@ -533,21 +601,18 @@ fn unify(
 					),
 					origins: vec![ origins.0, origins.1 ],
 				});
-				return;
+			} else {
+				substitutions.insert(*i, (*t).clone());
 			}
-			substitutions.insert(*i, (*t).clone());
 		}
 
 		_ if t1 != t2 => {
-			errors.insert(ErrorMessage {
-				msg: format!("there was a type mismatch between a{} `{}`, and a{} `{}`, expected to be of the same type due to the following lines:",
-					name_of(t1),
-					substitute(substitutions, t1),
-					name_of(t2),
-					substitute(substitutions, t2),
-				),
-				origins: vec![ origins.0, origins.1 ],
-			});
+			push_err!(
+				errors,
+				vec![ origins.0, origins.1 ],
+				"there was a type mismatch between a{} `{}`, and a{} `{}`, expected to be of the same type due to the following lines:",
+				name_of(t1), substitute(substitutions, t1), name_of(t2), substitute(substitutions, t2)
+			);
 		}
 		_ => {},
 	}
@@ -654,13 +719,13 @@ impl Expr {
 		let mut inference = Inference::new();
 		let mut constraints = Vec::new();
 		*self = inference.infer(self.clone(), &mut constraints);
-		inference.substitutions = solve_constraints(&constraints, &mut inference.errors);
+		let substitutions = solve_constraints(&constraints, &mut inference.errors);
 
 	// Annotate expressions
 		let typevar_env = Mutex::new(vec![ Vec::new() ]);
 		let error_messages = Mutex::new(inference.errors);
 		let trans_expr = annotate_helper(
-			&mut inference.substitutions,
+			&substitutions,
 			Some(&typevar_env),
 			Some(&error_messages)
 		);

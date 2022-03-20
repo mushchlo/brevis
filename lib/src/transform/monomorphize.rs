@@ -109,8 +109,8 @@ impl Expr {
 						.map(|((generic_name, instantiation), monomorphized_name)| {
 							let (mut mono_fn, _) = local_fn_declarations[generic_name].clone();
 
-							let mut substitutions = instantiation.clone().into_iter().collect();
-							let trans_expr = annotate_helper(&mut substitutions, None, None);
+							let substitutions = instantiation.clone().into_iter().collect();
+							let trans_expr = annotate_helper(&substitutions, None, None);
 							mono_fn.transform(trans_expr, |_| {});
 
 							Expr {

@@ -4,6 +4,7 @@ use crate::{
 		Type::*,
 		AggregateType,
 		unify::Constraint,
+		Mutability,
 	},
 	lex::tok::{
 		OpID::*,
@@ -11,6 +12,7 @@ use crate::{
 	},
 	parse::{
 		get_type_var,
+		get_type_var_id,
 		ast::{
 			Unary,
 			Binary,
@@ -28,7 +30,19 @@ impl Binary {
 			(self.right.r#type.clone(), self.right.loc)
 		);
 		let mut ret = match self.op {
-			Eq | Doeq | Noteq => vec![ Constraint::Equal(left, right) ],
+			Eq =>
+				match &self.left.val {
+					ExprVal::UnaryNode(u) if u.op == At =>
+						vec![
+							Constraint::Equal(left, right.clone()),
+							Constraint::Equal(
+								(u.expr.r#type.clone(), u.expr.loc),
+								(Pointer(box right.0, Mutability::Mutable), right.1)
+							)
+						],
+					_ => vec![ Constraint::Equal(left, right) ],
+				},
+			Doeq | Noteq => vec![ Constraint::Equal(left, right) ],
 			Gt | Lt | Gteq | Lteq => vec![
 				Constraint::Equal(left, right),
 			],
@@ -112,7 +126,7 @@ impl Unary {
 				vec![
 					Constraint::Equal(
 						(operand_t, operand_loc),
-						(Type::Pointer(box result.r#type.clone(), false), self.op_loc)
+						(Type::Pointer(box result.r#type.clone(), Mutability::Unknown(get_type_var_id())), self.op_loc)
 					),
 				],
 			Ref(_) => vec![],
@@ -128,7 +142,10 @@ impl Unary {
 			Not => Type::Bool,
 			Neg => self.expr.r#type.clone(),
 			At => get_type_var(),
-			Ref(mutable) => Type::Pointer(box self.expr.r#type.clone(), mutable),
+			Ref(true) =>
+				Type::Pointer(box self.expr.r#type.clone(), Mutability::Mutable),
+			Ref(false) =>
+				Type::Pointer(box self.expr.r#type.clone(), Mutability::Immutable),
 		};
 
 		Constraint::Equal(

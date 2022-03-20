@@ -76,7 +76,7 @@ pub fn verify_mutability(to_verify: &Expr) -> HashSet<ErrorMessage> {
 
 fn assert_mutable(
 	ex: &Expr,
-	mut_env: &Vec<HashMap<String, Parameter>>,
+	mut_env: &impl Env<String, Parameter>,
 	errs: &mut HashSet<ErrorMessage>
 ) {
 	use self::ExprVal::*;
@@ -93,12 +93,14 @@ fn assert_mutable(
 						v.name
 					);
 				}
+
+				true
 			}
 
-			_ => {}
-		}
+			UnaryNode(u) if u.op == UOpID::At => false,
 
-		true
+			_ => true,
+		}
 	};
 
 	ex.visit(asserter, |_| {});
