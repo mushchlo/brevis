@@ -66,6 +66,7 @@ pub struct Aggregate {
 #[derive(Clone, Debug)]
 pub struct Variable {
 	pub name: String,
+	pub declaration_loc: SourceLoc,
 	pub generics: HashMap<TypeVarId, Type>,
 }
 

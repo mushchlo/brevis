@@ -68,9 +68,11 @@ impl Expr {
 										MONOMORPHIZE_COUNTER.fetch_add(1, Ordering::SeqCst),
 										v.name
 									)
-								);
+								)
+								.clone();
 						*v = Variable {
 							name: mono_fn_name.clone(),
+							declaration_loc: SourceLoc::nonexistent(),
 							generics: HashMap::new(),
 						};
 					}

@@ -97,6 +97,7 @@ pub fn anfify(e: Expr) -> Expr {
 									val: Var(
 										ast::Variable {
 											name,
+											declaration_loc: SourceLoc::nonexistent(),
 											generics: HashMap::new(),
 										}
 									),

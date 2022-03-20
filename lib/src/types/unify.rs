@@ -285,12 +285,20 @@ impl Inference {
 				let (r#type, generics) = instantiate(&var_t, &self.substitutions);
 				let val = ExprVal::Var(Variable {
 					name: v.name,
+					declaration_loc: v.declaration_loc,
 					generics,
 				});
 				let loc = expr.loc;
 				let new_expr = Expr { val, loc, r#type };
 
-				constraints.push(mk_eq(&expr, &new_expr));
+				constraints.push(mk_eq(
+					&Expr {
+						val: expr.val,
+						loc: v.declaration_loc,
+						r#type: expr.r#type.clone(),
+					},
+					&new_expr
+				));
 
 				new_expr.val
 			}
@@ -520,10 +528,13 @@ fn unify(
 
 	match (&t1, &t2) {
 		(Func(args1), Func(args2)) if args1.len() != args2.len() => {
-			errors.insert(ErrorMessage {
-				msg: format!("functions with unequal lengths are attempting to be unified, {} and {}, due to the following lines", t1, t2),
-				origins: vec![ origins.0, origins.1 ],
-			});
+			push_err!(
+				errors,
+				vec![ origins.0, origins.1 ],
+				"functions with inequal lengths are attempting to be unified, {} and {}, due to the following lines",
+				substitute(substitutions, t1),
+				substitute(substitutions, t2),
+			);
 		}
 
 		(Func(args1), Func(args2)) => {
@@ -574,13 +585,13 @@ fn unify(
 
 		(Forall(args1, generic_t1), Forall(args2, generic_t2)) => {
 			if args1.len() != args2.len() {
-				errors.insert(ErrorMessage {
-					msg: format!("there was a type mismatch between a `{}` and a `{}`, expected to be the same due to the following lines:",
-						Forall(args1.to_vec(), generic_t1.clone()),
-						Forall(args2.to_vec(), generic_t2.clone()),
-					),
-					origins: vec![ origins.0, origins.1 ],
-				});
+				push_err!(
+					errors,
+					vec![ origins.0, origins.1 ],
+					"there was a type mismatch between a `{}` and a `{}`, expected to be the same due to the following lines:",
+					Forall(args1.to_vec(), box substitute(substitutions, &generic_t1)),
+					Forall(args2.to_vec(), box substitute(substitutions, &generic_t2)),
+				);
 				return;
 			}
 			recurse!(generic_t1, generic_t2, origins);
@@ -594,13 +605,13 @@ fn unify(
 
 		(Free(i), t) | (t, Free(i)) => {
 			if occurs_in(substitutions, *i, t) {
-				errors.insert(ErrorMessage {
-					msg: format!("types `{}` and `{}`, expected to be the same due to the following lines, are recursive.",
-						substitute(substitutions, t),
-						Free(*i)
-					),
-					origins: vec![ origins.0, origins.1 ],
-				});
+				push_err!(
+					errors,
+					vec![ origins.0, origins.1 ],
+					"types `{}` and `{}`, expected to be the same due to the following lines, are recursive.",
+					substitute(substitutions, t),
+					Free(*i)
+				);
 			} else {
 				substitutions.insert(*i, (*t).clone());
 			}

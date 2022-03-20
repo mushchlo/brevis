@@ -5,6 +5,7 @@ use crate::{
 	parse::ast::{
 		Expr,
 		ExprVal,
+		Variable,
 		Literal::*,
 		Pattern,
 	},
@@ -49,16 +50,18 @@ lazy_static! {
 	static ref TYPE_VAR_COUNTER: Arc<AtomicUsize> =
 		Arc::new(AtomicUsize::new(0));
 
-	static ref VAR_TYPES: Mutex<Vec<HashMap<String, Type>>> =
+	static ref VAR_ENV: Mutex<Vec<HashMap<String, SourceLoc>>> =
 		Mutex::new(vec![
-			core_vals.clone(),
+			core_vals.iter()
+				.map(|(name, _)| (name.clone(), SourceLoc::nonexistent()))
+				.collect(),
 			HashMap::new()
 		]);
 }
 
-macro_rules! var_types {
+macro_rules! var_env {
 	() => {
-		*VAR_TYPES.lock().unwrap()
+		*VAR_ENV.lock().unwrap()
 	}
 }
 
@@ -94,9 +97,11 @@ impl TokenStream {
 	}
 
 	pub fn parse(&mut self) -> Expr {
-		var_types!() =
+		var_env!() =
 			vec![
-				core_vals.clone(),
+				core_vals.iter()
+					.map(|(name, _)| (name.clone(), SourceLoc::nonexistent()))
+					.collect(),
 				HashMap::new()
 			];
 		type_dict!() = vec![ HashMap::new() ];
@@ -189,6 +194,7 @@ impl TokenStream {
 													operand_tok.loc,
 													ExprVal::Var(ast::Variable {
 														name: member.clone(),
+														declaration_loc: SourceLoc::nonexistent(),
 														generics: HashMap::new(),
 													})
 												)
@@ -275,16 +281,16 @@ impl TokenStream {
 					new_expr(loc, ExprVal::Literal(AtomicLiteral(l)))
 				}
 				Ident(_) => {
-					let id = s.parse_id();
+					let r#type = get_type_var();
+					let (name, declaration_loc) = s.parse_id();
 					Expr {
-						val: ExprVal::Var(
-							ast::Variable {
-								name: id.clone(),
-								generics: HashMap::new(),
-							}
-						),
+						val: ExprVal::Var(Variable {
+							name,
+							declaration_loc,
+							generics: HashMap::new(),
+						}),
 						loc,
-						r#type: var_types!().find(&id).unwrap().clone()
+						r#type,
 					}
 				}
 				UnaryOp(u) => s.parse_unary(u),
@@ -294,14 +300,14 @@ impl TokenStream {
 	}
 
 	fn parse_let(&mut self) -> Expr {
-		var_types!().new_stack();
+		var_env!().new_stack();
 		let start_loc = self.peek().unwrap().loc;
 		self.skip_token(KeyWord(KeyWord::Let));
 		let declared = self.parse_pattern();
 
 		self.skip_token(AssignOp(Eq));
 		let def = box self.parse_expr();
-		var_types!().pop_stack();
+		var_env!().pop_stack();
 		for assignee in declared.assignees() {
 			self.declare(assignee);
 		}
@@ -370,7 +376,7 @@ impl TokenStream {
 			loc: name_loc,
 		}) = self.next()
 		{
-			if var_types!().find(&name).is_some() {
+			if var_env!().find(&name).is_some() {
 				// making sure declared var does not already exist
 				panic!(
 					"variable {} was already declared, but was declared again at {}",
@@ -400,7 +406,7 @@ impl TokenStream {
 	}
 
 	fn declare(&mut self, declared: &ast::Parameter) {
-		var_types!().insert_in_env(declared.name.clone(), declared.r#type.clone());
+		var_env!().insert_in_env(declared.name.clone(), declared.name_loc);
 	}
 
 	fn declare_var(&mut self) -> ast::Parameter {
@@ -409,22 +415,23 @@ impl TokenStream {
 		declared
 	}
 
-	fn parse_id(&mut self) -> String {
+	fn parse_id(&mut self) -> (String, SourceLoc) {
 		if let Some(Token {
 			val: Ident(id),
 			loc
 		}) = self.next()
 		{
-			if var_types!().find(&id).is_some() {
-				return id;
+			if let Some(origin) = var_env!().find(&id) {
+				(id, *origin)
 			} else {
 				panic!("identifier {} at {} was used before declaration", id, loc.start);
 			}
+		} else {
+			panic!(
+				"expected identifier of a declared variable at {}",
+				self.peek().unwrap().loc.start
+			)
 		}
-		panic!(
-			"expected identifier of a declared variable at {}",
-			self.peek().unwrap().loc.start
-		);
 	}
 
 	fn parse_if(&mut self) -> Expr {
@@ -454,11 +461,11 @@ impl TokenStream {
 	}
 
 	fn parse_block(&mut self) -> Expr {
-		var_types!().new_stack();
+		var_env!().new_stack();
 		let (parsed, block_loc) = self.delimited(Punc('{'), Punc('}'), Punc(';'), |s|
 			s.parse_node()
 		);
-		var_types!().pop_stack();
+		var_env!().pop_stack();
 
 		match parsed.len() {
 			0 => panic!("empty block :/"),
@@ -501,7 +508,7 @@ impl TokenStream {
 	fn parse_lambda(&mut self) -> Expr {
 		let begin_loc = self.peek().unwrap().loc;
 		self.skip_token(KeyWord(KeyWord::λ));
-		var_types!().new_stack();
+		var_env!().new_stack();
 
 		let (args, _) = self.delimited(Punc('('), Punc(')'), Punc(','), |s| s.declare_var());
 		let return_type =
@@ -526,7 +533,7 @@ impl TokenStream {
 			body: Box::new(self.parse_expr()),
 		};
 
-		var_types!().pop_stack();
+		var_env!().pop_stack();
 
 		Expr {
 			loc: begin_loc.join(lambda_val.body.loc),
