@@ -60,7 +60,7 @@ impl Expr {
 				Var(v) => {
 					if !v.generics.is_empty() && !core_vals.contains_key(&v.name) {
 						let generics = v.generics.clone();
-						let mono_fn_name =
+						let name =
 							monomorphized_fns
 								.entry((v.name.clone(), generics.into_iter().collect()))
 								.or_insert_with(||
@@ -71,7 +71,7 @@ impl Expr {
 								)
 								.clone();
 						*v = Variable {
-							name: mono_fn_name.clone(),
+							name,
 							declaration_loc: SourceLoc::nonexistent(),
 							generics: HashMap::new(),
 						};

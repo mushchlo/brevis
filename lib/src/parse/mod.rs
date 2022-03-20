@@ -12,9 +12,9 @@ use crate::{
 	types::{
 		Type,
 		Type::*,
-		TypeVarId,
 		AggregateType,
-		Mutability
+		Mutability,
+		get_type_var,
 	},
 	lex::{
 		TokenStream,
@@ -35,20 +35,11 @@ use crate::{
 
 use lazy_static::lazy_static;
 use std::collections::{HashMap, VecDeque, HashSet};
-use std::sync::{
-	Arc,
-	Mutex,
-	atomic::{
-		AtomicUsize,
-		Ordering,
-	},
-};
+use std::sync::Mutex;
 
 lazy_static! {
 	static ref TYPE_DICT: Mutex<Vec<HashMap<String, Type>>> =
 		Mutex::new(vec![HashMap::new()]);
-	static ref TYPE_VAR_COUNTER: Arc<AtomicUsize> =
-		Arc::new(AtomicUsize::new(0));
 
 	static ref VAR_ENV: Mutex<Vec<HashMap<String, SourceLoc>>> =
 		Mutex::new(vec![
@@ -750,14 +741,6 @@ fn precedence(id: OpID) -> i8 {
 
 		_ => panic!("operator {:?} has no precedence, but it was requested", id),
 	}
-}
-
-pub fn get_type_var_id() -> TypeVarId {
-	TYPE_VAR_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
-
-pub fn get_type_var() -> Type {
-	Type::Free(get_type_var_id())
 }
 
 fn new_expr(loc: SourceLoc, value: ExprVal) -> Expr {

@@ -5,14 +5,14 @@ use crate::{
 		AggregateType,
 		unify::Constraint,
 		Mutability,
+		get_type_var,
+		get_type_var_id,
 	},
 	lex::tok::{
 		OpID::*,
 		UOpID::*,
 	},
 	parse::{
-		get_type_var,
-		get_type_var_id,
 		ast::{
 			Unary,
 			Binary,

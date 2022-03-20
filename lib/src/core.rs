@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use crate::types::{
 	Type,
 	Type::*,
-	Mutability
+	Mutability,
+	get_type_var,
 };
 use lazy_static::lazy_static;
-use parse::get_type_var;
 
 lazy_static! {
 	pub static ref core_vals: HashMap<String, Type> =
