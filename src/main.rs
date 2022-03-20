@@ -1,31 +1,47 @@
 extern crate brevislib;
+extern crate clap;
 
-use std::{
-    fs,
-    env,
-};
-use brevislib::{
-	core,
-};
+use brevislib::core;
+use clap::{arg, Command};
 
 fn main() {
-	if env::args().len() < 2 {
-		panic!("please specify at least one source file");
-	}
+	let args = Command::new("The Brevis Compiler")
+		.version("0.0.1")
+		.author("Chloe MacGregor <chloemacgregor29@gmail.com>")
+		.about("Compiles Brevis source code for PCs and the web")
+		.arg(
+			arg!(<FILE> "Source code to compile")
+				.required(true)
+		)
+		.arg(arg!(
+			-d --debug ... "Prints out an inferred and annotated AST for debugging"
+		))
+		.arg(
+			arg!(--target <TARGET> "The target language to compile to")
+				.required(false)
+				.possible_values(["9", "js", "c89"])
+				.default_value("c89")
+		)
+		.get_matches();
 
-	let (core, target) =
-		if env::args().any(|s| s == "-9") {
-			(core::CORE_FNS_9, "c")
-		} else if env::args().any(|s| s == "-js") {
-			(core::CORE_FNS_JS, "js")
-   		} else {
-			(core::CORE_FNS_POSIX, "c")
-		};
+	let (core, target) = match args.value_of("target").unwrap() {
+		"9" => (core::CORE_FNS_9, "c"),
+		"js" => (core::CORE_FNS_JS, "js"),
+		"c89" => (core::CORE_FNS_POSIX, "c"),
+		huh => panic!("{}", huh)
+	};
 
-	let contents = fs::read_to_string(env::args().last().unwrap()).expect("failed to open/read file");
-	coz::progress!("read file");
-	let compiled = brevislib::compile(&contents, core, target, |e| eprintln!("{}", e));
-	coz::progress!("compiled");
+	let contents =
+		std::fs::read_to_string(args.value_of("FILE").unwrap())
+			.expect("failed to open/read file");
+	let print_ast = args.occurrences_of("debug") > 0;
+	let compiled = brevislib::compile(
+		&contents,
+		core,
+		target,
+		print_ast,
+		|e| eprintln!("{}", e)
+	);
 	println!("{}", compiled);
 
 }

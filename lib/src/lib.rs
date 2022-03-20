@@ -37,7 +37,7 @@ pub const TAB_WIDTH: u32 = 4;
 #[wasm_bindgen]
 pub fn web_compile(src: String, core_fns: String, backend: String, err_fn: &js_sys::Function) -> String {
 	console_error_panic_hook::set_once();
-	compile(&src, &core_fns, &backend, |s|
+	compile(&src, &core_fns, &backend, false, |s|
 		match err_fn.call1(&JsValue::null(), &JsValue::from(s)) {
 			Ok(_) => {},
 			Err(e) => panic!("{:?}", e),
@@ -45,8 +45,15 @@ pub fn web_compile(src: String, core_fns: String, backend: String, err_fn: &js_s
 	)
 }
 
-pub fn compile<F>(src: &str, core_fns: &str, backend: &str, err_fn: F) -> String
-where F: Fn(String) {
+pub fn compile<F>(
+	src: &str,
+	core_fns: &str,
+	backend: &str,
+	print_parsed: bool,
+	err_fn: F
+) -> String
+	where F: Fn(String)
+{
 	let mut lexed = lex(src);
 	let mut parsed = lexed.parse();
 	transform::desugar(&mut parsed);
@@ -61,20 +68,31 @@ where F: Fn(String) {
 		}
 		err_fn(format!("Ended compilation due to the previous {} errors", err_count));
 		std::process::exit(1);
-	} else {
-		parsed.monomorphize();
-		transform::optimize(&mut parsed);
-		let parsed_anf = anfify(parsed);
-		match backend {
-			"c" => {
-				let mut compiler = Compilation::new();
-				let compiled = compiler.compile(parsed_anf);
-				format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}", core_fns, compiler.global_defs, compiler.fn_context.pop().unwrap(), compiler.global, compiled)
-			}
-			"js" =>
-				format!("{}\n{}; buffered", core_fns, compile_js(parsed_anf)),
+	}
 
-			_ => "".to_string()
+	parsed.monomorphize();
+	transform::optimize(&mut parsed);
+
+	if print_parsed {
+		println!("{:#?}", parsed);
+	}
+
+	let parsed_anf = anfify(parsed);
+	match backend {
+		"c" => {
+			let mut compiler = Compilation::new();
+			let compiled = compiler.compile(parsed_anf);
+			format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}",
+				core_fns,
+				compiler.global_defs,
+				compiler.fn_context.pop().unwrap(),
+				compiler.global,
+				compiled
+			)
 		}
+		"js" =>
+			format!("{}\n{}; buffered", core_fns, compile_js(parsed_anf)),
+
+		_ => "".to_string()
 	}
 }
