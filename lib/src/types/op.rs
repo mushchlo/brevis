@@ -2,7 +2,6 @@ use crate::{
 	types::{
 		Type,
 		Type::*,
-		AggregateType,
 		unify::Constraint,
 		Mutability,
 		get_type_var,
@@ -61,23 +60,6 @@ impl OpID {
 				Constraint::Equal(left, (Str, op_loc))
 			],
 
-			Member => {
-				let new_right = match &right_ex.val {
-					ExprVal::Var(s) => (
-						AggregateType {
-							name: s.name.clone(),
-							r#type: right.0.clone(),
-						},
-						right.1
-					),
-					_ => panic!("unreachable")
-				};
-
-				vec![
-					Constraint::HasMember((left_ex.r#type.clone(), left_ex.loc), new_right)
-				]
-			}
-
 			InfixFn => panic!("no"),
 		};
 		ret.push(self.result_constraint(op_loc, &left_ex.r#type, &right_ex.r#type, result));
@@ -85,7 +67,7 @@ impl OpID {
 		ret
 	}
 
-	pub fn result_constraint(&self, op_loc: SourceLoc, left_t: &Type, right_t: &Type, result: &Expr) -> Constraint {
+	pub fn result_constraint(&self, op_loc: SourceLoc, left_t: &Type, _right_t: &Type, result: &Expr) -> Constraint {
 		let result_t = match self {
 			Eq => Type::Void,
 
@@ -93,7 +75,6 @@ impl OpID {
 			Add | Sub | Mul | Div => left_t.clone(),
 			Mod => Type::Int,
 			Concat => Type::Str,
-			Member => right_t.clone(),
 
 			InfixFn => panic!("no")
 		};

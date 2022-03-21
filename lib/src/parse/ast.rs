@@ -56,6 +56,12 @@ pub enum ExprVal {
 		then: Box<Expr>,
 		r#else: Option<Box<Expr>>,
 	},
+	MemberAccess {
+		left: Box<Expr>,
+		member: AggregateType,
+		member_loc: SourceLoc,
+		dot_loc: SourceLoc,
+	},
 	Unary {
 		op: UOpID,
 		op_loc: SourceLoc,
@@ -235,7 +241,10 @@ impl Expr {
 		if trans(self) {
 			match &mut self.val {
 			// Dead ends, all done!
-				ExprVal::Literal(Literal::AtomicLiteral(_)) | ExprVal::Var(_) => {},
+				ExprVal::Literal(Literal::AtomicLiteral(_))
+					| ExprVal::Var(_)
+					| ExprVal::MemberAccess { .. } =>
+					{},
 
 				ExprVal::Literal(Literal::StructLiteral(s)) => {
 					for agg in s {
@@ -323,6 +332,7 @@ impl Expr {
 			Lambda { .. } => "a function",
 			If { r#else, .. } if r#else.is_some() => "an if-else-expression",
 			If { .. } => "an if-expression",
+			MemberAccess { .. } => "a member access",
 			Unary { .. } => "a unary expression",
 			Binary { .. } => "a binary expression",
 			Call { .. } => "a function call",
@@ -334,7 +344,10 @@ impl Expr {
 	fn descendents(&self) -> Vec<&Self> {
 		match &self.val {
 			// Dead ends, all done!
-			ExprVal::Literal(Literal::AtomicLiteral(_)) | ExprVal::Var(_) => Vec::new(),
+			ExprVal::Literal(Literal::AtomicLiteral(_))
+				| ExprVal::Var(_)
+				| ExprVal::MemberAccess { .. } =>
+				Vec::new(),
 
 			ExprVal::Literal(Literal::StructLiteral(s)) => s.iter().map(|agg| &agg.val).collect(),
 

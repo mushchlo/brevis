@@ -260,6 +260,7 @@ fn map_op(opstr: String, prev_op: Option<&TokenValue>) -> TokenValue {
 		"&" => UnaryOp(Ref(false)),
 		"=" => AssignOp(Eq),
 		"->" => KeyWord(KeyWord::Arrow),
+		"." => KeyWord(KeyWord::Dot),
 		op => BinaryOp(
 			match_dict(BINARY_OP_DICT.iter().cloned(), op)
 				.unwrap_or_else(|| panic!("invalid operator `{}`", opstr)),
@@ -275,31 +276,6 @@ where
 {
 	Some(dict.into_iter().find(|t| t.1 == matcher)?.0)
 }
-
-/*
-fn un_escape(str: String) -> String {
-	let mut last_backslash = false;
-	let mut unescaped: Vec<char> = Vec::new();
-
-	for ch in str.chars() {
-		if last_backslash {
-			match ch {
-				'n' => unescaped.push('\n'),
-				't' => unescaped.push('\t'),
-				'\\' => unescaped.push('\\'),
-				'"' => unescaped.push('"'),
-				_ => panic!("unknown escape sequence: `\\{}`", ch),
-			}
-			last_backslash = false;
-		} else if ch == '\\' {
-			last_backslash = true;
-		} else {
-			unescaped.push(ch);
-		}
-	}
-
-	unescaped.into_iter().collect()
-}*/
 
 fn is_op_char(c: char) -> bool {
 	".`|+-*/=!~<>%@&".contains(&c.to_string())

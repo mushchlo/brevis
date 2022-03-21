@@ -40,7 +40,6 @@ lazy_static! {
 	static ref C_OP: HashMap<OpID, &'static str> =
 		hashmap!{
 			Eq => "=",
-			Member => ".",
 			Add => "+",
 			Sub => "-",
 			Mul => "*",
@@ -110,6 +109,8 @@ pub fn compile_js(e: Expr) -> String {
 				},
 				compile_js(*expr)
 			),
+		ExprVal::MemberAccess { left, member, .. } =>
+			format!("({}).{}", compile_js(*left), mk_id(&member.name)),
 		ExprVal::Binary { op, left, right, .. } =>
 			if op == Xor {
 				format!("!({}) != !({})",
@@ -242,6 +243,9 @@ impl Compilation {
 						}
 				),
 
+			ExprVal::MemberAccess { left, member, .. } =>
+				format!("({}).{}", self.compile(*left), mk_id(&member.name)),
+
 			ExprVal::Unary { op, expr, .. } => {
 				let c_op = match op {
 					Not => "!",
@@ -297,8 +301,6 @@ impl Compilation {
 					}
 				} else if op == Xor {
 					format!("!({}) != !({})", c_left, c_right)
-				} else if op == Member {
-					format!("({}).{}", c_left, c_right)
 				} else {
 					format!("({}) {} ({})", c_left, C_OP[&op], c_right)
 				}

@@ -33,7 +33,6 @@ use crate::{
 	},
 	lex::tok::{
 		LiteralVal,
-		OpID,
 	},
 	core::core_vals,
 	lex::cradle::SourceLoc,
@@ -117,6 +116,21 @@ impl Inference {
 				ExprVal::Literal(AtomicLiteral(lit))
 			}
 
+			ExprVal::MemberAccess { left, member, member_loc, dot_loc } => {
+				let new_left = self.infer(*left.clone(), constraints);
+				constraints.push(mk_eq(&new_left, &left));
+				constraints.push(Constraint::HasMember(
+					(new_left.r#type.clone(), new_left.loc),
+					(member.clone(), dot_loc)
+				));
+				constraints.push(Constraint::Equal(
+					(member.r#type.clone(), member_loc),
+					(expr.r#type.clone(), expr.loc)
+				));
+
+				ExprVal::MemberAccess { left: box new_left, member, member_loc, dot_loc }
+			}
+
 			ExprVal::Unary { op, op_loc, expr: operand } => {
 				let mut op_constraints = op.associations(op_loc, &operand, &expr);
 				let new_operand = self.infer(*operand.clone(), constraints);
@@ -133,14 +147,8 @@ impl Inference {
 			ExprVal::Binary { left, right, op, op_loc } => {
 				let new_left = self.infer(*left.clone(), constraints);
 				constraints.push(mk_eq(&new_left, &left));
-				let new_right =
-					if op != OpID::Member {
-						let new_right = self.infer(*right.clone(), constraints);
-						constraints.push(mk_eq(&new_right, &right));
-						new_right
-					} else {
-						*right
-					};
+				let new_right = self.infer(*right.clone(), constraints);
+				constraints.push(mk_eq(&new_right, &right));
 
 				let mut op_constraints = op.associations(op_loc, &new_left, &new_right, &expr);
 				constraints.append(&mut op_constraints);

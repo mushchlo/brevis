@@ -44,9 +44,6 @@ pub enum OpID {
 	// assignment
 	Eq,
 
-	// lookup member of structure
-	Member,
-
 	// string concatenation
 	Concat,
 
@@ -87,6 +84,7 @@ pub enum KeyWord {
 	Union,
 	Struct,
 	Arrow,
+	Dot,
 	#[allow(non_camel_case_types)]
 	λ,
 }
@@ -121,5 +119,4 @@ pub const BINARY_OP_DICT: &[(OpID, &str)] = &[
 	(Doeq, "=="),
 	(Noteq, "!="),
 	(InfixFn, "`"),
-	(Member, "."),
 ];

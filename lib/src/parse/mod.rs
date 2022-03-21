@@ -141,27 +141,32 @@ impl TokenStream {
 		}
 	}
 
-	fn maybe_binary(&mut self, left_expr: Expr, prev_prec: i8) -> Expr {
+	fn maybe_binary(&mut self, left: Expr, prev_prec: i8) -> Expr {
 		use self::ExprVal::Binary;
 
 		if let Some(op_tok) = self.peek() {
 			match op_tok.val {
+				KeyWord(KeyWord::Dot) => {
+					self.skip_token(KeyWord(KeyWord::Dot));
+					let (name, member_loc) = self.parse_id();
+					let member = AggregateType { name, r#type: get_type_var() };
+					let dot_loc = op_tok.loc;
+					let loc = left.loc.join(member_loc);
+					let val = ExprVal::MemberAccess { left: box left, member, member_loc, dot_loc };
+
+					return self.maybe_binary(new_expr(loc, val), -1);
+				}
+
 				BinaryOp(InfixFn) => {
 					self.skip_token(BinaryOp(InfixFn));
-				// TODO: MASSIVE BUG HERE. INFIX FNs CANNOT CONTAIN BINARY OP??? AWFUL IMPL
-					let e = self.parse_atom();
-					let f = new_expr(e.loc, e.val);
+					let func = box self.parse_var();
 					self.skip_token(BinaryOp(InfixFn));
-					let right_expr = self.parse_expr();
-					let parsed = new_expr(
-						left_expr.loc.join(right_expr.loc),
-						ExprVal::Call {
-							func: box f,
-							args: VecDeque::from([ left_expr, right_expr ]),
-						}
-					);
+					let right = self.parse_expr();
 
-					return self.maybe_binary(parsed, -1);
+					let loc = left.loc.join(right.loc);
+					let args = VecDeque::from([ left, right ]);
+
+					return self.maybe_binary(new_expr(loc, ExprVal::Call { func, args }), -1);
 				}
 
 				BinaryOp(_) | AssignOp(_) => {
@@ -174,60 +179,16 @@ impl TokenStream {
 
 					if curr_prec > prev_prec {
 						self.next();
-						let right_expr =
-							if curr_op == OpID::Member {
-								self.maybe_call(|s|
-									if let Some(operand_tok) = s.peek() {
-										match &operand_tok.val {
-											Ident(member) => {
-												s.skip_token(Ident(member.clone()));
-												new_expr(
-													operand_tok.loc,
-													ExprVal::Var(ast::Variable {
-														name: member.clone(),
-														declaration_loc: SourceLoc::nonexistent(),
-														generics: HashMap::new(),
-													})
-												)
-											}
-
-											non_id => panic!("At {}, the dot operator was used with a non-identifier RHS argument {:#?}.", op_tok.loc.start, non_id)
-										}
-									} else {
-										panic!("Expected a RHS argument for the dot operator, found EOF");
-									}
-								)
-							} else {
-								let tmp = self.parse_atom();
-								self.maybe_binary(tmp, curr_prec)
-							};
+						let tmp = self.parse_atom();
+						let right = self.maybe_binary(tmp, curr_prec);
 
 						let parsed = new_expr(
-							left_expr.loc.join(right_expr.loc),
-							match &right_expr.val {
-							// TODO: This is a hack to fix call parsing being messed up in the case
-							// of a member access. Fix this on a higher level.
-								ExprVal::Call { func, args } if curr_op == Member => {
-									ExprVal::Call {
-										args: args.clone(),
-										func: box new_expr(
-											SourceLoc::new(left_expr.loc.start, right_expr.loc.start.index),
-											Binary {
-												left: box left_expr,
-												right: func.clone(),
-												op: curr_op,
-												op_loc: op_tok.loc,
-											}
-										),
-									}
-								}
-								_ =>
-									Binary {
-										left: Box::new(left_expr),
-										right: Box::new(right_expr),
-										op: curr_op,
-										op_loc: op_tok.loc,
-									},
+							left.loc.join(right.loc),
+							Binary {
+								left: Box::new(left),
+								right: Box::new(right),
+								op: curr_op,
+								op_loc: op_tok.loc,
 							}
 						);
 
@@ -239,7 +200,7 @@ impl TokenStream {
 			}
 		}
 
-		left_expr
+		left
 	}
 
 	fn parse_atom(&mut self) -> Expr {
@@ -271,19 +232,7 @@ impl TokenStream {
 					s.skip_token(Literal(l.clone()));
 					new_expr(loc, ExprVal::Literal(AtomicLiteral(l)))
 				}
-				Ident(_) => {
-					let r#type = get_type_var();
-					let (name, declaration_loc) = s.parse_id();
-					Expr {
-						val: ExprVal::Var(Variable {
-							name,
-							declaration_loc,
-							generics: HashMap::new(),
-						}),
-						loc,
-						r#type,
-					}
-				}
+				Ident(_) => s.parse_var(),
 				UnaryOp(u) => s.parse_unary(u),
 				_ => panic!("unexpected token {:?}", s.peek().unwrap()),
 			}
@@ -402,21 +351,28 @@ impl TokenStream {
 		declared
 	}
 
+	fn parse_var(&mut self) -> Expr {
+		let (name, loc) = self.parse_id();
+		if let Some(declaration_loc) = var_env!().find(&name).copied() {
+			new_expr(
+				loc,
+				ExprVal::Var(
+					Variable { name, declaration_loc, generics: HashMap::new() }
+				)
+			)
+		} else {
+			panic!("identifier {} at {} was used before declaration", name, loc.start);
+		}
+	}
+
 	fn parse_id(&mut self) -> (String, SourceLoc) {
-		if let Some(Token {
-			val: Ident(id),
-			loc
-		}) = self.next()
-		{
-			if let Some(origin) = var_env!().find(&id) {
-				(id, *origin)
-			} else {
-				panic!("identifier {} at {} was used before declaration", id, loc.start);
-			}
+		if let Some(Token { val: Ident(name), loc }) = self.peek() {
+			self.next();
+			(name, loc)
 		} else {
 			panic!(
-				"expected identifier of a declared variable at {}",
-				self.peek().unwrap().loc.start
+				"expected an identifier at {}, found {:#?}",
+				self.peek().unwrap().loc.start, self.peek().map(|t| t.val)
 			)
 		}
 	}
@@ -713,8 +669,6 @@ fn precedence(id: OpID) -> i8 {
 		Add | Sub | Concat => 10,
 
 		Mul | Div | Mod => 20,
-
-		Member => 30,
 
 		_ => panic!("operator {:?} has no precedence, but it was requested", id),
 	}
