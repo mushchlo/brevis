@@ -14,12 +14,6 @@ use crate::{
 	parse::ast::{
 		Expr,
 		ExprVal,
-		Let,
-		Lambda,
-		IfElse,
-		Call,
-		Binary,
-		Unary,
 		Variable,
 		Aggregate,
 		Literal::*,
@@ -123,59 +117,35 @@ impl Inference {
 				ExprVal::Literal(AtomicLiteral(lit))
 			}
 
-			ExprVal::Unary(u) => {
-				let mut op_constraints = u.associations(&expr);
-				let new_operand = self.infer(*u.expr.clone(), constraints);
-				constraints.push(mk_eq(&new_operand, &u.expr));
+			ExprVal::Unary { op, op_loc, expr: operand } => {
+				let mut op_constraints = op.associations(op_loc, &operand, &expr);
+				let new_operand = self.infer(*operand.clone(), constraints);
+				constraints.push(mk_eq(&new_operand, &operand));
 				constraints.append(&mut op_constraints);
 
-				ExprVal::Unary(
-					Unary {
-						expr: box new_operand,
-						op: u.op,
-						op_loc: u.op_loc,
-					}
-				)
+				ExprVal::Unary {
+					expr: box new_operand,
+					op,
+					op_loc,
+				}
 			}
 
-			ExprVal::Binary(b) if b.op == OpID::Member => {
-				let new_left = self.infer(*b.left.clone(), constraints);
+			ExprVal::Binary { left, right, op, op_loc } => {
+				let new_left = self.infer(*left.clone(), constraints);
+				constraints.push(mk_eq(&new_left, &left));
+				let new_right =
+					if op != OpID::Member {
+						let new_right = self.infer(*right.clone(), constraints);
+						constraints.push(mk_eq(&new_right, &right));
+						new_right
+					} else {
+						*right
+					};
 
-				constraints.push(mk_eq(&new_left, &b.left));
-
-				let mut op_constraints = b.associations(&expr);
+				let mut op_constraints = op.associations(op_loc, &new_left, &new_right, &expr);
 				constraints.append(&mut op_constraints);
 
-				ExprVal::Binary(
-					Binary {
-						op: b.op,
-						op_loc: b.op_loc,
-						left: box new_left,
-						right: b.right,
-					}
-				)
-			}
-
-			ExprVal::Binary(b) => {
-				let (new_left, new_right) = (
-					self.infer(*b.left.clone(), constraints),
-					self.infer(*b.right.clone(), constraints)
-				);
-
-				constraints.push(mk_eq(&new_left, &b.left));
-				constraints.push(mk_eq(&new_right, &b.right));
-
-				let mut op_constraints = b.associations(&expr);
-				constraints.append(&mut op_constraints);
-
-				ExprVal::Binary(
-					Binary {
-						op: b.op,
-						op_loc: b.op_loc,
-						left: box new_left,
-						right: box new_right,
-					}
-				)
+				ExprVal::Binary { left: box new_left, right: box new_right, op, op_loc }
 			}
 
 			ExprVal::Block(b) => {
@@ -186,11 +156,11 @@ impl Inference {
 			// generalization and substitution of definitions until after. This properly
 			// infers variables that are used in declarations before they are constrained.
 				for line in &mut new_block {
-					if let ExprVal::Let(l) = &line.val {
-						for declared in l.declared.assignees() {
+					if let ExprVal::Let { declared, def } = &line.val {
+						for declared in declared.assignees() {
 							self.env.insert_in_env(declared.name.clone(), declared.r#type.clone());
 						}
-						constraints.push(l.declared.constrain_as(l.def.r#type.clone(), l.def.loc));
+						constraints.push(declared.constrain_as(def.r#type.clone(), def.loc));
 					}
 					*line = self.infer(line.clone(), constraints);
 				}
@@ -204,47 +174,45 @@ impl Inference {
 				ExprVal::Block(new_block)
 			}
 
-			ExprVal::Let(mut l) => {
+			ExprVal::Let { mut declared, mut def } => {
 			// The declared variables need to be placed prematurely in the environment, in case
 			// the definition is a recursive function. After inferring the definition, the declared
 			// variable is reinserted into the environment, with its inferred type.
-				for declared in l.declared.assignees() {
+				for declared in declared.assignees() {
 					self.env.insert_in_env(declared.name.clone(), declared.r#type.clone());
 				}
-				l.def = {
-					let mut new_def = self.infer(*l.def, constraints);
+				def = {
+					let mut new_def = self.infer(*def, constraints);
 					let local_substitutions = solve_constraints(constraints, &mut self.errors);
 					new_def.r#type = generalize(
 						substitute(&local_substitutions, &new_def.r#type)
 					);
 
 					// Reinsert the declared variables, with their new generalized types.
-					l.declared.infer_as(
+					declared.infer_as(
 						new_def.r#type.clone(),
 						new_def.loc,
 						&mut self.errors
 					);
-					for declared in l.declared.assignees() {
+					for declared in declared.assignees() {
 						self.env.insert_in_env(declared.name.clone(), declared.r#type.clone());
 					}
 
 					box new_def
 				};
+
+				let new_expr = Expr { val: ExprVal::Let { declared, def }, r#type: Void, loc: expr.loc };
 				constraints.push(mk_eq(
 					&expr,
-					&Expr {
-						val: ExprVal::Let(l.clone()),
-						r#type: Void,
-						loc: expr.loc,
-					}
+					&new_expr
 				));
-				ExprVal::Let(l)
+				new_expr.val
 			}
 
-			ExprVal::If(i) => {
-				let new_then = self.infer(*i.then.clone(), constraints);
-				let new_cond = self.infer(*i.cond.clone(), constraints);
-				let new_else = i.r#else.map(|box else_expr| {
+			ExprVal::If { cond, then, r#else } => {
+				let new_then = self.infer(*then.clone(), constraints);
+				let new_cond = self.infer(*cond.clone(), constraints);
+				let new_else = r#else.map(|box else_expr| {
 					let tmp = self.infer(else_expr, constraints);
 					constraints.push(mk_eq(&new_then, &tmp));
 					box tmp
@@ -257,9 +225,9 @@ impl Inference {
 						)
 					)
 				}
-				constraints.push(mk_eq(&new_then, &i.then));
+				constraints.push(mk_eq(&new_then, &then));
 				constraints.push(mk_eq(&new_then, &expr));
-				constraints.push(mk_eq(&new_cond, &i.cond));
+				constraints.push(mk_eq(&new_cond, &cond));
 				constraints.push(
 					Constraint::Equal(
 						(new_cond.r#type.clone(), new_cond.loc),
@@ -267,13 +235,11 @@ impl Inference {
 					)
 				);
 
-				ExprVal::If(
-					IfElse {
-						then: box new_then,
-						cond: box new_cond,
-						r#else: new_else,
-					}
-				)
+				ExprVal::If {
+					then: box new_then,
+					cond: box new_cond,
+					r#else: new_else,
+				}
 			}
 
 			ExprVal::Var(v) => {
@@ -305,59 +271,55 @@ impl Inference {
 				new_expr.val
 			}
 
-			ExprVal::Lambda(l) => {
+			ExprVal::Lambda { args, body, captured }  => {
 				self.env.new_stack();
-				for arg in l.args.iter() {
+				for arg in args.iter() {
 					self.env.insert_in_env(arg.name.clone(), arg.r#type.clone());
 				}
 
 				let new_body = self.infer(Expr {
-					val: l.body.val.clone(),
-					loc: l.body.loc,
+					val: body.val.clone(),
+					loc: body.loc,
 					r#type: get_type_var(),
 				}, constraints);
 
 				let new_fn_t = Func(
-					l.args.iter()
+					args.iter()
 						.map(|arg| arg.r#type.clone())
 						.chain(iter::once(new_body.r#type.clone()))
 						.collect(),
 			 	);
 
-				let new_lambda = Lambda {
-					args: l.args,
-					body: box new_body,
-					captured: l.captured,
+				let new_lambda = Expr {
+					val: ExprVal::Lambda { body: box new_body, args, captured },
+					r#type: new_fn_t,
+					loc: expr.loc,
 				};
 
 				self.env.pop();
 
 				constraints.push(mk_eq(
 					&expr,
-					&Expr {
-						val: ExprVal::Lambda(new_lambda.clone()),
-						r#type: new_fn_t,
-						loc: expr.loc,
-					}
+					&new_lambda
 				));
 
-				ExprVal::Lambda(new_lambda)
+				new_lambda.val
 			}
 
-			ExprVal::Call(c) => {
-				let args_t = c.args.clone().into_iter().map(|arg| arg.r#type);
+			ExprVal::Call { args, func } => {
+				let args_t = args.clone().into_iter().map(|arg| arg.r#type);
 				let fn_t = Func(
 					args_t.clone().chain(iter::once(expr.r#type.clone())).collect()
 				);
 				let func = box self.infer(
 					Expr {
-						val: c.func.val.clone(),
-						loc: c.func.loc,
+						val: func.val.clone(),
+						loc: func.loc,
 						r#type: fn_t,
 					},
 					constraints
 				);
-				let args = c.args.into_iter()
+				let args = args.into_iter()
 					.zip(args_t)
 					.map(|(arg, t)| self.infer(
 						Expr {
@@ -369,7 +331,7 @@ impl Inference {
 					))
 					.collect();
 
-				ExprVal::Call(Call { func, args })
+				ExprVal::Call { func, args }
 			}
 		};
 
@@ -593,7 +555,7 @@ pub fn annotate_helper<'a>(
 			}
 		}
 		match &mut e.val {
-			ExprVal::Let(Let { declared, def }) => {
+			ExprVal::Let { declared, def } => {
 				if let Forall(generics, _) = &def.r#type {
 					if let Some(env) = &typevar_env {
 						let mut env = env.lock().unwrap();
@@ -626,12 +588,14 @@ pub fn annotate_helper<'a>(
 				}
 			}
 
-			ExprVal::Lambda(lam) => {
-				lam.captured = lam.captured.drain().map(|mut captured| {
-					captured.r#type = generalize(substitute(substitutions, &captured.r#type));
-					captured
-				}).collect();
-				for arg in &mut lam.args {
+			ExprVal::Lambda { captured, args, .. }  => {
+				*captured = captured.drain()
+					.map(|mut c| {
+						c.r#type = generalize(substitute(substitutions, &c.r#type));
+						c
+					})
+					.collect();
+				for arg in args.iter_mut() {
 					arg.r#type = substitute(substitutions, &arg.r#type);
 				}
 			}

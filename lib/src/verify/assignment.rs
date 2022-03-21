@@ -14,12 +14,8 @@ use crate::{
 pub fn verify_assignment(to_verify: &Expr) -> HashSet<ErrorMessage> {
 	let mut errors = HashSet::new();
 	let verify = |e: &Expr| {
-		match &e.val {
-			ExprVal::Binary(b) if b.op == OpID::Eq => {
-				assert_assignable(&b.left, b.op_loc, &mut errors);
-			}
-
-			_ => {}
+		if let ExprVal::Binary { op: OpID::Eq, left, op_loc, .. } = &e.val {
+			assert_assignable(left, *op_loc, &mut errors);
 		}
 
 		true
@@ -34,18 +30,18 @@ fn assert_assignable(e: &Expr, op_loc: SourceLoc, errors: &mut HashSet<ErrorMess
 	use self::ExprVal::*;
 	let asserter = |e: &Expr| {
 		match &e.val {
-			Unary(u) if u.op != UOpID::At => {
+			Unary { op_loc, op, .. } if *op != UOpID::At => {
 				push_err!(
 					errors,
-					vec![ e.loc, op_loc ],
+					vec![ e.loc, *op_loc ],
 					"a unary expression was attempted to be assigned to",
 				);
 
 				false
 			}
 
-			Literal(_) | Let(_) | Block(_) | Lambda(_)
-				| If(_) | Binary(_) | Call(_) => {
+			Literal(_) | Let { .. } | Block { .. } | Lambda { .. }
+				| If { .. } | Binary { .. } | Call { .. } => {
 				push_err!(
 					errors,
 					vec![ e.loc, op_loc ],

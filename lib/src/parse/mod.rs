@@ -115,7 +115,7 @@ impl TokenStream {
 	fn parse_node(&mut self) -> Expr {
 		let atom = self.parse_atom();
 		self.maybe_call(|s| match &atom.val {
-			ExprVal::Let(_) => atom.clone(),
+			ExprVal::Let { .. } => atom.clone(),
 			_ => s.maybe_binary(atom.clone(), -1),
 		})
 	}
@@ -155,10 +155,10 @@ impl TokenStream {
 					let right_expr = self.parse_expr();
 					let parsed = new_expr(
 						left_expr.loc.join(right_expr.loc),
-						ExprVal::Call(ast::Call {
+						ExprVal::Call {
 							func: box f,
 							args: VecDeque::from([ left_expr, right_expr ]),
-						})
+						}
 					);
 
 					return self.maybe_binary(parsed, -1);
@@ -207,27 +207,27 @@ impl TokenStream {
 							match &right_expr.val {
 							// TODO: This is a hack to fix call parsing being messed up in the case
 							// of a member access. Fix this on a higher level.
-								ExprVal::Call(c) if curr_op == Member => {
-									ExprVal::Call(ast::Call {
-										args: c.args.clone(),
+								ExprVal::Call { func, args } if curr_op == Member => {
+									ExprVal::Call {
+										args: args.clone(),
 										func: box new_expr(
 											SourceLoc::new(left_expr.loc.start, right_expr.loc.start.index),
-											Binary(ast::Binary {
+											Binary {
 												left: box left_expr,
-												right: c.func.clone(),
+												right: func.clone(),
 												op: curr_op,
 												op_loc: op_tok.loc,
-											})
+											}
 										),
-									})
+									}
 								}
 								_ =>
-									Binary(ast::Binary {
+									Binary {
 										left: Box::new(left_expr),
 										right: Box::new(right_expr),
 										op: curr_op,
 										op_loc: op_tok.loc,
-									}),
+									},
 							}
 						);
 
@@ -305,11 +305,7 @@ impl TokenStream {
 		let end_loc = def.loc;
 
 		Expr {
-			val:
-				ExprVal::Let(ast::Let {
-					declared,
-					def,
-				}),
+			val: ExprVal::Let { declared, def },
 			r#type: Type::Void,
 			loc: start_loc.join(end_loc),
 		}
@@ -428,27 +424,19 @@ impl TokenStream {
 	fn parse_if(&mut self) -> Expr {
 		let begin_pos = self.peek().unwrap().loc.start;
 		self.skip_token(KeyWord(KeyWord::If));
-		let mut parsed = ast::IfElse {
-			cond: Box::new(self.parse_expr()),
-			then: Box::new(self.parse_expr()),
-			r#else: None,
-		};
 
-		let mut end_pos = parsed.then.loc.end;
-		if let Some(Token {
-			val: KeyWord(KeyWord::Else),
-			loc: else_loc,
-		}) = self.peek()
-		{
-			end_pos = else_loc.end;
-			self.next();
-			parsed.r#else = Some(Box::new(self.parse_expr()));
-		}
+		let cond = box self.parse_expr();
+		let then = box self.parse_expr();
+		let (r#else, end_pos) =
+			if let Some(Token { val: KeyWord(KeyWord::Else), loc }) = self.peek() {
+				self.next();
+				(Some(box self.parse_expr()), loc.end)
+			} else {
+				(None, then.loc.end)
+			};
+		let parsed = ExprVal::If { cond, then, r#else };
 
-		new_expr(
-			SourceLoc::new(begin_pos, end_pos),
-			ExprVal::If(parsed)
-		)
+		new_expr(SourceLoc::new(begin_pos, end_pos), parsed)
 	}
 
 	fn parse_block(&mut self) -> Expr {
@@ -512,25 +500,20 @@ impl TokenStream {
 			} else {
 				get_type_var()
 			};
-		let fn_type = Func(
+
+		let r#type = Func(
 			args.iter()
 				.map(|_| get_type_var())
 				.chain(std::iter::once(return_type))
 				.collect()
 		);
-		let lambda_val = ast::Lambda {
-			args,
-			captured: HashSet::new(),
-			body: Box::new(self.parse_expr()),
-		};
+		let body = box self.parse_expr();
+		let loc = begin_loc.join(body.loc);
+		let val = ExprVal::Lambda { captured: HashSet::new(), args, body };
 
 		var_env!().pop_stack();
 
-		Expr {
-			loc: begin_loc.join(lambda_val.body.loc),
-			val: ExprVal::Lambda(lambda_val),
-			r#type: fn_type,
-		}
+		Expr { loc, val, r#type }
 	}
 
 	fn parse_call(&mut self, f: Expr) -> Expr {
@@ -541,14 +524,12 @@ impl TokenStream {
 			|s| s.parse_expr()
 		);
 		let loc = f.loc.join(args_loc);
-		let call_val = ast::Call {
+		let call_val = ExprVal::Call {
 			func: Box::new(f),
 			args,
 		};
-		new_expr(
-			loc,
-			ExprVal::Call(call_val)
-		)
+
+		new_expr(loc, call_val)
 	}
 
 	fn parse_unary(&mut self, mut op: UOpID) -> Expr {
@@ -568,11 +549,7 @@ impl TokenStream {
 		let expr = box self.parse_atom();
 		new_expr(
 			op_loc.join(expr.loc),
-			ExprVal::Unary(ast::Unary {
-				op,
-				op_loc,
-				expr,
-			})
+			ExprVal::Unary { op, op_loc, expr }
 		)
 	}
 

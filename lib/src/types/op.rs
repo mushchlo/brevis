@@ -8,35 +8,31 @@ use crate::{
 		get_type_var,
 		get_type_var_id,
 	},
-	lex::tok::{
-		OpID::*,
-		UOpID::*,
+	lex::{
+		tok::{OpID, OpID::*, UOpID, UOpID::*},
+		cradle::SourceLoc,
 	},
-	parse::{
-		ast::{
-			Unary,
-			Binary,
-			Expr,
-			ExprVal,
-		},
-	},
+	parse::ast::{Expr, ExprVal},
 };
 
 
-impl Binary {
-	pub fn associations(&self, result: &Expr) -> Vec<Constraint> {
-		let (left, right) = (
-			(self.left.r#type.clone(), self.left.loc),
-			(self.right.r#type.clone(), self.right.loc)
-		);
-		let mut ret = match self.op {
+impl OpID {
+	pub fn associations(
+		&self,
+		op_loc: SourceLoc,
+		left_ex: &Expr,
+		right_ex: &Expr,
+		result: &Expr
+	) -> Vec<Constraint> {
+		let (left, right) = ((left_ex.r#type.clone(), left_ex.loc), (right_ex.r#type.clone(), right_ex.loc));
+		let mut ret = match self {
 			Eq =>
-				match &self.left.val {
-					ExprVal::Unary(u) if u.op == At =>
+				match &left_ex.val {
+					ExprVal::Unary { op: At, expr, .. } =>
 						vec![
 							Constraint::Equal(left, right.clone()),
 							Constraint::Equal(
-								(u.expr.r#type.clone(), u.expr.loc),
+								(expr.r#type.clone(), expr.loc),
 								(Pointer(box right.0, Mutability::Mutable), right.1)
 							)
 						],
@@ -57,20 +53,20 @@ impl Binary {
 
 			Mod => vec![
 				Constraint::Equal(left, right.clone()),
-				Constraint::Equal(right, (Int, self.op_loc))
+				Constraint::Equal(right, (Int, op_loc))
 			],
 
 			Concat => vec![
 				Constraint::Equal(left.clone(), right),
-				Constraint::Equal(left, (Str, self.op_loc))
+				Constraint::Equal(left, (Str, op_loc))
 			],
 
 			Member => {
-				let new_right = match &self.right.val {
+				let new_right = match &right_ex.val {
 					ExprVal::Var(s) => (
 						AggregateType {
 							name: s.name.clone(),
-							r#type: right.0,
+							r#type: right.0.clone(),
 						},
 						right.1
 					),
@@ -78,46 +74,46 @@ impl Binary {
 				};
 
 				vec![
-					Constraint::HasMember(left, new_right)
+					Constraint::HasMember((left_ex.r#type.clone(), left_ex.loc), new_right)
 				]
 			}
 
 			InfixFn => panic!("no"),
 		};
-		ret.push(self.result_constraint(result));
+		ret.push(self.result_constraint(op_loc, &left_ex.r#type, &right_ex.r#type, result));
 
 		ret
 	}
 
-	pub fn result_constraint(&self, result: &Expr) -> Constraint {
-		let result_t = match self.op {
+	pub fn result_constraint(&self, op_loc: SourceLoc, left_t: &Type, right_t: &Type, result: &Expr) -> Constraint {
+		let result_t = match self {
 			Eq => Type::Void,
 
 			Gt | Lt | Gteq | Lteq | Doeq | Noteq | And | Or | Xor => Type::Bool,
-			Add | Sub | Mul | Div => self.left.r#type.clone(),
+			Add | Sub | Mul | Div => left_t.clone(),
 			Mod => Type::Int,
 			Concat => Type::Str,
-			Member => self.right.r#type.clone(),
+			Member => right_t.clone(),
 
 			InfixFn => panic!("no")
 		};
 
 		Constraint::Equal(
-			(result_t, result.loc),
-			(result.r#type.clone(), self.op_loc),
+			(result.r#type.clone(), result.loc),
+			(result_t, op_loc),
 		)
 	}
 }
 
-impl Unary {
-	pub fn associations(&self, result: &Expr) -> Vec<Constraint> {
-		let (operand_t, operand_loc) = (self.expr.r#type.clone(), self.expr.loc);
-		let mut ret = match self.op {
+impl UOpID {
+	pub fn associations(&self, op_loc: SourceLoc, operand: &Expr, result: &Expr) -> Vec<Constraint> {
+		let (operand_t, operand_loc) = (operand.r#type.clone(), operand.loc);
+		let mut ret = match self {
 			Not =>
 				vec![
 					Constraint::Equal(
 						(operand_t, operand_loc),
-						(Type::Bool, self.op_loc)
+						(Type::Bool, op_loc)
 					),
 				],
 			Neg =>
@@ -126,30 +122,30 @@ impl Unary {
 				vec![
 					Constraint::Equal(
 						(operand_t, operand_loc),
-						(Type::Pointer(box result.r#type.clone(), Mutability::Unknown(get_type_var_id())), self.op_loc)
+						(Type::Pointer(box result.r#type.clone(), Mutability::Unknown(get_type_var_id())), op_loc)
 					),
 				],
 			Ref(_) => vec![],
 		};
 
-		ret.push(self.result_constraint(result));
+		ret.push(self.result_constraint(op_loc, operand, result));
 
 		ret
 	}
 
-	pub fn result_constraint(&self, result: &Expr) -> Constraint {
-		let result_t = match self.op {
+	pub fn result_constraint(&self, op_loc: SourceLoc, operand: &Expr, result: &Expr) -> Constraint {
+		let result_t = match self {
 			Not => Type::Bool,
-			Neg => self.expr.r#type.clone(),
+			Neg => operand.r#type.clone(),
 			At => get_type_var(),
 			Ref(true) =>
-				Type::Pointer(box self.expr.r#type.clone(), Mutability::Mutable),
+				Type::Pointer(box operand.r#type.clone(), Mutability::Mutable),
 			Ref(false) =>
-				Type::Pointer(box self.expr.r#type.clone(), Mutability::Immutable),
+				Type::Pointer(box operand.r#type.clone(), Mutability::Immutable),
 		};
 
 		Constraint::Equal(
-			(result_t, self.op_loc),
+			(result_t, op_loc),
 			(result.r#type.clone(), result.loc)
 		)
 	}

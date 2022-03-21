@@ -3,6 +3,8 @@ use maplit::hashmap;
 
 use std::collections::{
 	HashMap,
+	HashSet,
+	VecDeque,
 	hash_map::*,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -12,7 +14,7 @@ use crate::{
 	parse::ast::{
 		Expr,
 		ExprVal,
-		Lambda,
+		Parameter,
 		Literal,
 		Literal::*,
 	},
@@ -66,20 +68,20 @@ fn lambda_name() -> String {
 
 pub fn compile_js(e: Expr) -> String {
 	format!("({})", match e.val {
-		ExprVal::Lambda(l) =>
+		ExprVal::Lambda { args, body, .. } =>
 			format!("(function ({}) {{ return {}; }})",
-				l.args.iter()
+				args.iter()
 					.map(|v| mk_id(&v.name))
 					.reduce(|acc, next| acc + ", " + &next)
 					.unwrap_or_else(|| "".to_string()),
-				compile_js(*l.body)
+				compile_js(*body)
 			),
 		ExprVal::Literal(AtomicLiteral(atom)) =>
 			compile_atomic(atom),
 		ExprVal::Literal(StructLiteral(_s)) =>
 			panic!("structs not yet implemented for js backend"),
-		ExprVal::Let(l) =>
-			format!("({} = {})", mk_id(&l.declared.assert_assignee().name), compile_js(*l.def)),
+		ExprVal::Let { declared, def } =>
+			format!("({} = {})", mk_id(&declared.assert_assignee().name), compile_js(*def)),
 		ExprVal::Var(v) =>
 			mk_id(&v.name),
 		ExprVal::Block(b) =>
@@ -89,44 +91,44 @@ pub fn compile_js(e: Expr) -> String {
 					.reduce(|acc, next| acc + "," + &next)
 					.unwrap_or_else(|| "".to_string()),
 			),
-		ExprVal::If(ifelse) =>
+		ExprVal::If { cond, then, r#else } =>
 			format!("({}) ? ({}) : ({})",
-				compile_js(*ifelse.cond),
-				compile_js(*ifelse.then),
-				if let Some(box e) = ifelse.r#else {
+				compile_js(*cond),
+				compile_js(*then),
+				if let Some(box e) = r#else {
 					compile_js(e)
 				} else {
 					"false".to_string()
 				}
 			),
-		ExprVal::Unary(u) =>
+		ExprVal::Unary { op, expr, .. } =>
 			format!("{}({})",
-				match u.op {
+				match op {
 					Not => "!",
 					Neg => "-",
 					_ => panic!("unary is not unary!")
 				},
-				compile_js(*u.expr)
+				compile_js(*expr)
 			),
-		ExprVal::Binary(b) =>
-			if b.op == Xor {
+		ExprVal::Binary { op, left, right, .. } =>
+			if op == Xor {
 				format!("!({}) != !({})",
-					compile_js(*b.left),
-					compile_js(*b.right)
+					compile_js(*left),
+					compile_js(*right)
 				)
 			} else {
 				format!("({}) {} ({})",
-					compile_js(*b.left),
-					if !JS_OP.contains_key(&b.op) {
-						panic!("{:?} is not in c_op", b.op)
-					} else { JS_OP[&b.op] },
-					compile_js(*b.right)
+					compile_js(*left),
+					if !JS_OP.contains_key(&op) {
+						panic!("{:?} is not in c_op", op)
+					} else { JS_OP[&op] },
+					compile_js(*right)
 				)
 			},
-		ExprVal::Call(c) =>
+		ExprVal::Call { func, args } =>
 			format!("{}({})",
-				compile_js(*c.func),
-				c.args.iter()
+				compile_js(*func),
+				args.iter()
 					.map(|v| compile_trivial(v.clone()))
 					.reduce(|acc, next| acc + ", " + &next)
 					.unwrap_or_else(|| "".to_string())
@@ -153,24 +155,30 @@ impl Compilation {
 
 // type_name is used for functions that are named, and therefore can recurse,
 // so that they can have their own name defined at the top of the function.
-	fn compile_lambda(&mut self, l: Lambda, type_name: Option<&str>) -> String {
-		if !l.captured.is_empty() {
+	fn compile_lambda(
+		&mut self,
+		args: VecDeque<Parameter>,
+		captured: HashSet<Parameter>,
+		body: Expr,
+		type_name: Option<&str>
+	) -> String {
+		if !captured.is_empty() {
 			panic!("closures are not yet supported in C codegen.");
 		}
 		let args_t =
-			l.args.iter()
+			args.iter()
 				.map(|a| a.r#type.clone())
-				.chain(iter::once(l.body.r#type.clone()))
+				.chain(iter::once(body.r#type.clone()))
 				.collect::<Vec<_>>();
 		let args_names =
-			l.args.into_iter()
+			args.into_iter()
 				.map(|a| a.name)
 				.collect();
 		let fn_name = lambda_name();
-		let return_t = l.body.r#type.clone();
+		let return_t = body.r#type.clone();
 
 		self.fn_context.push("".to_string());
-		let c_body = self.compile(*l.body);
+		let c_body = self.compile(body);
 		let declarations = self.fn_context.pop();
 		let fn_declaration =
 			format!("{}\n{{\n{}{}{}{};\n}}\n",
@@ -220,45 +228,46 @@ impl Compilation {
 						.unwrap()
 				),
 
-			ExprVal::Lambda(l) =>
-				self.compile_lambda(l, None),
+			ExprVal::Lambda { args, captured, body } =>
+				self.compile_lambda(args, captured, *body, None),
 
-			ExprVal::If(ifelse) =>
+			ExprVal::If { cond, then, r#else } =>
 				format!("({}) ? ({}) : ({})",
-						self.compile(*ifelse.cond),
-						self.compile(*ifelse.then),
-						if let Some(box expr) = ifelse.r#else {
+						self.compile(*cond),
+						self.compile(*then),
+						if let Some(box expr) = r#else {
 							self.compile(expr)
 						} else {
 							"0".to_string()
 						}
 				),
 
-			ExprVal::Unary(u) => {
-				let c_op = match u.op {
+			ExprVal::Unary { op, expr, .. } => {
+				let c_op = match op {
 					Not => "!",
 					Neg => "-",
 					Ref(_) => "&",
 					At => "*",
 				};
 
-				format!("{}({})", c_op, self.compile(*u.expr))
+				format!("{}({})", c_op, self.compile(*expr))
 			}
 
-			ExprVal::Let(l) => {
-				let declared_var = l.declared.assert_assignee();
+			ExprVal::Let { declared, def } => {
+				let declared_var = declared.assert_assignee();
 				let c_type_name = self.compile_type_name(declared_var.r#type.clone(), mk_id(&declared_var.name), true);
 				let def_str =
-					match l.def {
+					match def {
 						box Expr {
-							val: ExprVal::Lambda(lambda), ..
+							val: ExprVal::Lambda { args, captured, body },
+							..
 						} => {
-							let c_fn = self.compile_lambda(lambda, Some(&c_type_name));
+							let c_fn = self.compile_lambda(args, captured, *body, Some(&c_type_name));
 							format!("{} = {}", mk_id(&declared_var.name), c_fn)
 						}
 
 						box expr =>
-							format!("{} = {}", mk_id(&l.declared.assert_assignee().name), self.compile(expr)),
+							format!("{} = {}", mk_id(&declared.assert_assignee().name), self.compile(expr)),
 					};
 				let prev_context = self.fn_context.pop().unwrap();
 				self.fn_context.push(
@@ -267,41 +276,41 @@ impl Compilation {
 				def_str + "\n"
 			}
 
-			ExprVal::Binary(b) => {
+			ExprVal::Binary { left, right, op, .. } => {
 				let (c_left, c_right) = (
-					self.compile(*b.left),
-					self.compile(*b.right)
+					self.compile(*left),
+					self.compile(*right)
 				);
 			// TODO: A special case of strings is only made because we still use
 			// C-strings! We should not use C-strings!!!!!!
 				if e.r#type == Str {
-					match b.op {
+					match op {
 						Eq => format!("{} = {}", c_left, c_right),
 						Concat => format!("concat({}, {})", c_left, c_right),
 						Doeq | Noteq =>
 							format!("{}strcmp({}, {})",
-								if b.op == Doeq { "!" } else { "" },
+								if op == Doeq { "!" } else { "" },
 								c_left,
 								c_right
 							),
-						_ => panic!("operator {:?} does not apply to strings", b.op)
+						_ => panic!("operator {:?} does not apply to strings", op)
 					}
-				} else if b.op == Xor {
+				} else if op == Xor {
 					format!("!({}) != !({})", c_left, c_right)
-				} else if b.op == Member {
+				} else if op == Member {
 					format!("({}).{}", c_left, c_right)
 				} else {
-					format!("({}) {} ({})", c_left, C_OP[&b.op], c_right)
+					format!("({}) {} ({})", c_left, C_OP[&op], c_right)
 				}
 			}
 
-			ExprVal::Call(c) => {
-				let args =
-					c.args.iter()
+			ExprVal::Call { args, func } => {
+				let compiled_args =
+					args.iter()
 						.map(|tr| compile_trivial(tr.clone()))
 						.reduce(|acc, next| acc + ", " + &next)
 						.unwrap_or_else(|| "".to_string());
-				format!("{}({})", self.compile(*c.func), args)
+				format!("{}({})", self.compile(*func), compiled_args)
 			}
 		}
 	}

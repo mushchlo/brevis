@@ -10,7 +10,6 @@ use crate::{
 	parse::ast::{
 		Expr,
 		ExprVal,
-		Lambda,
 		Pattern,
 	},
 	types::Type,
@@ -23,26 +22,30 @@ pub fn desugar(e: &mut Expr) {
 fn desugar_assignment_patterns(e: &mut Expr) {
 	use self::Pattern::*;
 	let desugarer = |ex: &mut Expr| {
-		if let ExprVal::Let(l) = &mut ex.val {
-			match l.declared.clone() {
+		if let ExprVal::Let { def, declared } = &mut ex.val {
+			match declared.clone() {
 				Assignee(_) | Literal(_) | Empty(_) => {}
 
 				Func { func, args } => {
-					l.declared = Assignee(func);
-					l.def = box Expr {
+					*declared = Assignee(func);
+					**def = Expr {
 						r#type: Type::Func(
-							args.iter().map(|arg| &arg.r#type).chain(iter::once(&l.def.r#type)).cloned().collect()
+							args.iter()
+								.map(|arg| &arg.r#type)
+								.chain(iter::once(&def.r#type))
+								.cloned()
+								.collect()
 						),
-						val: ExprVal::Lambda(Lambda {
+						val: ExprVal::Lambda {
 							args: VecDeque::from(args.clone()),
 							captured: HashSet::new(),
-							body: l.def.clone(),
-						}),
-						loc: l.def.loc,
+							body: def.clone(),
+						},
+						loc: def.loc,
 					};
 				}
 
-				Struct(_s) => panic!("structure patterns not supported yet!"),
+				Struct(_) => panic!("structure patterns not supported yet!"),
 			}
 		}
 

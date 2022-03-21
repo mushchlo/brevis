@@ -12,7 +12,6 @@ use crate::{
 	parse::ast::{
 		Expr,
 		ExprVal::*,
-		Let,
 		Pattern,
 		Parameter,
 		Variable,
@@ -88,12 +87,12 @@ impl Expr {
 			let mut fns = fns.lock().unwrap();
 			let mut monomorphized_fns = monomorphized_fns.lock().unwrap();
 			match &mut e.val {
-				Let(l) => {
-					match &l.def.r#type {
+				Let { declared, def } => {
+					match &def.r#type {
 						Type::Forall(generics, _) if !generics.is_empty() => {
 							fns.insert_in_env(
-								l.declared.assert_assignee().name.clone(),
-								(*l.def.clone(), generics.clone())
+								declared.assert_assignee().name.clone(),
+								(*def.clone(), generics.clone())
 							);
 						}
 						_ => {}
@@ -116,19 +115,18 @@ impl Expr {
 							mono_fn.transform(trans_expr, |_| {});
 
 							Expr {
-								val:
-									Let(Let {
-										declared: Pattern::Assignee(Parameter {
-											name: monomorphized_name.clone(),
-											mutable: false,
-										// These are zero values, as this variable doesn't
-										// exist in the source code.
-											name_loc: SourceLoc::nonexistent(),
-											type_loc: None,
-											r#type: mono_fn.r#type.clone(),
-										}),
-										def: box mono_fn
+								val: Let {
+									declared: Pattern::Assignee(Parameter {
+										name: monomorphized_name.clone(),
+										mutable: false,
+									// These are zero values, as this variable doesn't
+									// exist in the source code.
+										name_loc: SourceLoc::nonexistent(),
+										type_loc: None,
+										r#type: mono_fn.r#type.clone(),
 									}),
+									def: box mono_fn
+								},
 								r#type: Type::Void,
 								loc: SourceLoc::nonexistent(),
 							}

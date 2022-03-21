@@ -55,16 +55,16 @@ impl Expr {
 								);
 					}
 				}
-				ExprVal::Lambda(l) => {
+				ExprVal::Lambda { args, .. } => {
+					captured_stack.push(Vec::new());
 					env.push(
-						l.args.iter()
+						args.iter()
 							.map(|p| (p.name.clone(), p.clone()))
 							.collect()
 					);
-					captured_stack.push(Vec::new());
 				}
-				ExprVal::Let(ref l) => {
-					for declared in l.declared.assignees() {
+				ExprVal::Let { declared, .. } => {
+					for declared in declared.assignees() {
 						env.last_mut().unwrap().insert(declared.name.clone(), declared.clone());
 					}
 				}
@@ -75,9 +75,9 @@ impl Expr {
 			true
 		};
 		let post_transifier = |e: &mut Expr| {
-			if let ExprVal::Lambda(l) = &mut e.val {
+			if let ExprVal::Lambda { captured, .. } = &mut e.val {
 				env.lock().unwrap().pop();
-				l.captured = captured_stack.lock().unwrap()
+				*captured = captured_stack.lock().unwrap()
 					.pop().unwrap().into_iter().collect();
 			}
 		};

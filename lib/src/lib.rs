@@ -77,11 +77,11 @@ pub fn compile<F>(
 		println!("{:#?}", parsed);
 	}
 
-	let parsed_anf = anfify(parsed);
+	anfify(&mut parsed);
 	match backend {
 		"c" => {
 			let mut compiler = Compilation::new();
-			let compiled = compiler.compile(parsed_anf);
+			let compiled = compiler.compile(parsed);
 			format!("{}\n{}\n{}\n{}\nvoid\nmain(void)\n{{\n{};\n}}",
 				core_fns,
 				compiler.global_defs,
@@ -91,7 +91,7 @@ pub fn compile<F>(
 			)
 		}
 		"js" =>
-			format!("{}\n{}; buffered", core_fns, compile_js(parsed_anf)),
+			format!("{}\n{}; buffered", core_fns, compile_js(parsed)),
 
 		_ => "".to_string()
 	}

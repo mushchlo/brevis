@@ -39,16 +39,40 @@ pub struct Expr {
 #[derive(Clone, Debug)]
 pub enum ExprVal {
 	Literal(Literal),
-
-	Let(Let),
 	Var(Variable),
 	Block(VecDeque<Expr>),
-	Lambda(Lambda),
-	If(IfElse),
 
-	Unary(Unary),
-	Binary(Binary),
-	Call(Call),
+	Let {
+		declared: Pattern,
+		def: Box<Expr>,
+	},
+	Lambda {
+		args: VecDeque<Parameter>,
+		captured: HashSet<Parameter>,
+		body: Box<Expr>,
+	},
+	If {
+		cond: Box<Expr>,
+		then: Box<Expr>,
+		r#else: Option<Box<Expr>>,
+	},
+	Unary {
+		op: UOpID,
+		op_loc: SourceLoc,
+		expr: Box<Expr>,
+	},
+// TODO: make member accesses NOT binary structures, but
+// their own thing.
+	Binary {
+		op: OpID,
+		op_loc: SourceLoc,
+		left: Box<Expr>,
+		right: Box<Expr>,
+	},
+	Call {
+		func: Box<Expr>,
+		args: VecDeque<Expr>,
+	},
 }
 
 #[derive(Clone, Debug)]
@@ -70,38 +94,6 @@ pub struct Variable {
 	pub generics: HashMap<TypeVarId, Type>,
 }
 
-
-// TODO: make member accesses NOT binary structures, but
-// their own thing.
-#[derive(Clone, Debug)]
-pub struct Binary {
-	pub op: OpID,
-	pub op_loc: SourceLoc,
-	pub left: Box<Expr>,
-	pub right: Box<Expr>,
-}
-
-#[derive(Clone, Debug)]
-pub struct IfElse {
-	pub cond: Box<Expr>,
-	pub then: Box<Expr>,
-	pub r#else: Option<Box<Expr>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Unary {
-	pub op: UOpID,
-	pub op_loc: SourceLoc,
-	pub expr: Box<Expr>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Lambda {
-	pub args: VecDeque<Parameter>,
-	pub captured: HashSet<Parameter>,
-	pub body: Box<Expr>,
-}
-
 #[derive(Clone, Debug, PartialEq, std::cmp::Eq, Hash)]
 pub struct Parameter {
 	pub name: String,
@@ -109,18 +101,6 @@ pub struct Parameter {
 	pub mutable: bool,
 	pub name_loc: SourceLoc,
 	pub type_loc: Option<SourceLoc>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Call {
-	pub func: Box<Expr>,
-	pub args: VecDeque<Expr>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Let {
-	pub declared: Pattern,
-	pub def: Box<Expr>,
 }
 
 #[derive(Clone, Debug)]
@@ -269,34 +249,34 @@ impl Expr {
 					}
 				}
 
-				ExprVal::Let(l) => {
-					recurse!(&mut l.def);
+				ExprVal::Let { def, .. } => {
+					recurse!(def);
 				}
 
-				ExprVal::Lambda(lam) => {
-					recurse!(&mut lam.body);
+				ExprVal::Lambda { body, .. } => {
+					recurse!(body);
 				}
 
-				ExprVal::If(ifelse) => {
-					recurse!(&mut ifelse.cond);
-					recurse!(&mut ifelse.then);
-					if let Some(box e) = &mut ifelse.r#else {
+				ExprVal::If { cond, then, r#else } => {
+					recurse!(cond);
+					recurse!(then);
+					if let Some(box e) = r#else {
 						recurse!(e);
 					}
 				}
 
-				ExprVal::Unary(u) => {
-					recurse!(&mut u.expr);
+				ExprVal::Unary { expr, .. } => {
+					recurse!(expr);
 				}
 
-				ExprVal::Binary(b) => {
-					recurse!(&mut b.right);
-					recurse!(&mut b.left);
+				ExprVal::Binary { right, left, .. } => {
+					recurse!(right);
+					recurse!(left);
 				}
 
-				ExprVal::Call(c) => {
-					recurse!(&mut c.func);
-					for arg in &mut c.args {
+				ExprVal::Call { func, args } => {
+					recurse!(func);
+					for arg in args {
 						recurse!(arg);
 					}
 				}
@@ -337,15 +317,15 @@ impl Expr {
 					LiteralVal::Bool(_) => "a boolean literal",
 				},
 			Literal(StructLiteral(_)) => "a structure literal",
-			Let(_) => "a declaration",
+			Let { .. } => "a declaration",
 			Var(_) => "a variable",
-			Block(_) => "a block",
-			Lambda(_) => "a function",
-			If(ifelse) if ifelse.r#else.is_some() => "an if-else-expression",
-			If(_) => "an if-expression",
-			Unary(_) => "a unary expression",
-			Binary(_) => "a binary expression",
-			Call(_) => "a function call",
+			Block { .. } => "a block",
+			Lambda { .. } => "a function",
+			If { r#else, .. } if r#else.is_some() => "an if-else-expression",
+			If { .. } => "an if-expression",
+			Unary { .. } => "a unary expression",
+			Binary { .. } => "a binary expression",
+			Call { .. } => "a function call",
 		}
 	}
 
@@ -360,22 +340,22 @@ impl Expr {
 
 			ExprVal::Block(b) => b.iter().rev().collect(),
 
-			ExprVal::Let(l) => vec![ &l.def ],
+			ExprVal::Let { def, .. } => vec![ def ],
 
-			ExprVal::Lambda(lam) => vec![ &lam.body ],
+			ExprVal::Lambda { body, .. } => vec![ body ],
 
-			ExprVal::If(ifelse) =>
-				IntoIterator::into_iter([ ifelse.cond.as_ref(), ifelse.then.as_ref() ])
-					.chain(ifelse.r#else.as_ref().iter().map(|&e| e.as_ref()))
+			ExprVal::If { cond, then, r#else } =>
+				IntoIterator::into_iter([ cond.as_ref(), then.as_ref() ])
+					.chain(r#else.as_ref().iter().map(|&e| e.as_ref()))
 					.collect(),
 
-			ExprVal::Unary(u) => vec![ &u.expr ],
+			ExprVal::Unary { expr, .. } => vec![ expr ],
 
-			ExprVal::Binary(b) => vec![ &b.right, &b.left ],
+			ExprVal::Binary { left, right, .. } => vec![ left, right ],
 
-			ExprVal::Call(c) =>
-				iter::once(&*c.func)
-					.chain(c.args.iter())
+			ExprVal::Call { func, args } =>
+				iter::once(func.as_ref())
+					.chain(args.iter())
 					.collect(),
 		}
 	}

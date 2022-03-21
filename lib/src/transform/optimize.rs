@@ -32,8 +32,8 @@ fn remove_dead_code(e: &mut Expr) {
 		let mut declared_in_block = declared_in_block.lock().unwrap();
 		let mut used = used.lock().unwrap();
 		match &mut ex.val {
-			Let(l) => {
-				for assignee in l.declared.assignees() {
+			Let { declared, .. } => {
+				for assignee in declared.assignees() {
 					declared_in_block.last_mut().unwrap().push(assignee.name.clone());
 					used.insert(assignee.name.clone(), false);
 				}
@@ -60,8 +60,8 @@ fn remove_dead_code(e: &mut Expr) {
 				ex.val = Block(
 					b.clone().into_iter()
 						.filter(|line|
-							if let Let(l) = &line.val {
-								l.declared.assignees().iter().all(|a| used[&a.name])
+							if let Let { declared, .. } = &line.val {
+								declared.assignees().iter().all(|a| used[&a.name])
 							} else {
 								true
 							}
@@ -73,9 +73,9 @@ fn remove_dead_code(e: &mut Expr) {
 				}
 			}
 
-			Let(l) => {
+			Let { declared, .. } => {
 			// Nice try, recursively defined values.
-				for declared in l.declared.assignees() {
+				for declared in declared.assignees() {
 					used.insert(declared.name.clone(), false);
 				}
 			}
