@@ -1,8 +1,16 @@
 extern crate brevislib;
 extern crate clap;
+extern crate lazy_static;
 
 use brevislib::core;
 use clap::{arg, Command};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use lazy_static::lazy_static;
+
+lazy_static! {
+	pub static ref TAB_WIDTH: AtomicUsize =
+		AtomicUsize::new(4);
+}
 
 fn main() {
 	let args = Command::new("The Brevis Compiler")
@@ -16,6 +24,10 @@ fn main() {
 		.arg(arg!(
 			-d --debug ... "Prints out an inferred and annotated AST for debugging"
 		))
+		.arg(arg!(-w --width <TAB> "The width of tabs to be displayed")
+			.required(false)
+			.validator(|s| s.parse::<usize>())
+		)
 		.arg(
 			arg!(--target <TARGET> "The target language to compile to")
 				.required(false)
@@ -24,11 +36,15 @@ fn main() {
 		)
 		.get_matches();
 
+	if let Ok(w) = args.value_of_t("width") {
+		TAB_WIDTH.store(w, Ordering::SeqCst);
+	}
+
 	let (core, target) = match args.value_of("target").unwrap() {
 		"9" => (core::CORE_FNS_9, "c"),
 		"js" => (core::CORE_FNS_JS, "js"),
 		"c89" => (core::CORE_FNS_POSIX, "c"),
-		huh => panic!("{}", huh)
+		_ => unreachable!()
 	};
 
 	let contents =

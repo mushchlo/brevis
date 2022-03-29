@@ -67,12 +67,14 @@ pub fn compile<F>(
 			print_error(src, err, &err_fn);
 		}
 		err_fn(format!("Ended compilation due to the previous {} errors", err_count));
-		std::process::exit(1);
+		return String::new();
+	}
+	if print_parsed {
+		println!("{:#?}", parsed);
 	}
 
 	parsed.monomorphize();
 	transform::optimize(&mut parsed);
-
 	if print_parsed {
 		println!("{:#?}", parsed);
 	}

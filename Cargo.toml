@@ -11,6 +11,7 @@ debug = 1
 [workspace]
 
 [dependencies]
+lazy_static = "1.4.0"
 clap = { version = "3.1.6", features = ["derive"] }
 regex = "1"
 brevis-lib = { path = "./lib/" }

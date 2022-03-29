@@ -18,7 +18,7 @@ impl<'a> CharsPos<'a> {
 }
 
 
-#[derive(Debug, Copy, Clone, PartialEq, std::cmp::Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Ord, std::cmp::Eq, Hash)]
 pub struct SourceLoc {
 	pub start: SourcePos,
 	pub end: usize,
@@ -49,7 +49,7 @@ impl SourceLoc {
 	}
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, std::cmp::Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Ord, std::cmp::Eq, Hash)]
 pub struct SourcePos {
 	pub row: u32,
 	pub col: u32,

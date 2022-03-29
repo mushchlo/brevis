@@ -3,7 +3,7 @@ pub mod typeprint;
 mod unify;
 
 use std::iter::{self, FromIterator};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeSet};
 use std::sync::{
 	Arc,
 	atomic::{AtomicUsize, Ordering},
@@ -26,7 +26,7 @@ pub enum Type {
 	Bool,
 
 	// Union(Vec<Aggregate>),
-	Struct(Vec<AggregateType>),
+	Struct(BTreeSet<AggregateType>),
 
 	Pointer(Box<Type>, Mutability),
 // The argument types, ending with the return type

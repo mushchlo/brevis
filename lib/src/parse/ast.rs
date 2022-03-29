@@ -242,9 +242,7 @@ impl Expr {
 			match &mut self.val {
 			// Dead ends, all done!
 				ExprVal::Literal(Literal::AtomicLiteral(_))
-					| ExprVal::Var(_)
-					| ExprVal::MemberAccess { .. } =>
-					{},
+					| ExprVal::Var(_) => {},
 
 				ExprVal::Literal(Literal::StructLiteral(s)) => {
 					for agg in s {
@@ -258,14 +256,6 @@ impl Expr {
 					}
 				}
 
-				ExprVal::Let { def, .. } => {
-					recurse!(def);
-				}
-
-				ExprVal::Lambda { body, .. } => {
-					recurse!(body);
-				}
-
 				ExprVal::If { cond, then, r#else } => {
 					recurse!(cond);
 					recurse!(then);
@@ -274,7 +264,10 @@ impl Expr {
 					}
 				}
 
-				ExprVal::Unary { expr, .. } => {
+				ExprVal::Unary { expr, .. }
+					| ExprVal::MemberAccess { left: expr, .. }
+					| ExprVal::Let { def: expr, .. }
+					| ExprVal::Lambda { body: expr, .. } => {
 					recurse!(expr);
 				}
 

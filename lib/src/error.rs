@@ -5,7 +5,7 @@ macro_rules! push_err {
 	($errs:expr, $origins:expr, $($fmt:tt)*) => {
 		$errs.insert(ErrorMessage {
 			msg: format!($($fmt)*),
-			origins: $origins,
+			origins: $origins.to_vec(),
 		})
 	}
 }

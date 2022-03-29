@@ -1,12 +1,7 @@
 use std::{
 	iter,
-	collections::{
-		HashMap,
-		HashSet,
-	},
-	sync::{
-		Mutex,
-	},
+	collections::{HashMap, HashSet, BTreeSet},
+	sync::Mutex,
 };
 
 use crate::{
@@ -358,13 +353,13 @@ pub fn solve_constraints(constraints: &[Constraint], errors: &mut HashSet<ErrorM
 	for constraint in constraints.iter() {
 		match constraint {
 			Constraint::Equal((t1, l1), (t2, l2)) => {
-				unify(&mut substitutions, &mut mutability_substitutions, errors, t1, t2, (*l1, *l2));
+				unify(&mut substitutions, &mut mutability_substitutions, errors, t1, t2, &[ *l1, *l2 ]);
 			}
 
 			Constraint::HasMember((t, l1), (m, l2)) => {
-				member_map.entry(t)
-					.or_insert_with(Vec::new)
-					.push((m.clone(), (*l1, *l2)));
+				let entry = member_map.entry(t).or_insert_with(BTreeSet::new);
+				entry.insert((m.clone(), *l1));
+				entry.insert((m.clone(), *l2));
 			}
 		}
 	}
@@ -375,9 +370,9 @@ pub fn solve_constraints(constraints: &[Constraint], errors: &mut HashSet<ErrorM
 		// passed into unify() to track where each member constraint
 		// came from. Probably just refactor so that members are a
 		// proper trait.
-		let locs = members_locations.iter().map(|(_, locs)| *locs).next().unwrap();
+		let locs: Vec<_> = members_locations.iter().map(|(_, locs)| *locs).collect();
 		let members = members_locations.into_iter().map(|(types, _)| types).collect();
-		unify(&mut substitutions, &mut mutability_substitutions, errors, t, &Struct(members), locs);
+		unify(&mut substitutions, &mut mutability_substitutions, errors, t, &Struct(members), &locs);
 	}
 
 	for t in substitutions.values_mut() {
@@ -400,7 +395,7 @@ fn unify(
 	errors: &mut HashSet<ErrorMessage>,
 	t1: &Type,
 	t2: &Type,
-	origins: (SourceLoc, SourceLoc)
+	origins: &[SourceLoc]
 ) {
 	use self::Mutability::*;
 
@@ -414,7 +409,7 @@ fn unify(
 		(Func(args1), Func(args2)) if args1.len() != args2.len() => {
 			push_err!(
 				errors,
-				vec![ origins.0, origins.1 ],
+				origins,
 				"functions with inequal lengths are attempting to be unified, {} and {}, due to the following lines",
 				substitute(substitutions, t1),
 				substitute(substitutions, t2),
@@ -428,14 +423,20 @@ fn unify(
 		}
 
 		(Struct(s1), Struct(s2)) => {
-			assert_eq!(s1.len(), s2.len());
-
-			let (mut s1, mut s2) = (s1.clone(), s2.clone());
-			s1.sort();
-			s2.sort();
 			for (a1, a2) in s1.iter().zip(s2.iter()) {
-				assert_eq!(a1.name, a2.name);
-				recurse!(&a1.r#type, &a2.r#type, origins);
+				if a1.name == a2.name {
+					recurse!(&a1.r#type, &a2.r#type, origins);
+				} else {
+					push_err!(
+						errors,
+						origins,
+						"Structures {} and {} were thought to be the same due to the following lines,\n\
+						 but have members of differing names ({} vs {}):",
+						substitute(substitutions, &Struct(s1.clone())),
+						substitute(substitutions, &Struct(s2.clone())),
+						a1.name, a2.name
+					);
+				}
 			}
 		}
 
@@ -456,7 +457,7 @@ fn unify(
 			if m1 != m2 {
 				push_err!(
 					errors,
-					vec![ origins.0, origins.1 ],
+					origins,
 					"I expected the mutability of this {} and this {} to be the same, due to the following lines, but they were not ({} vs {})",
 					substitute(substitutions, &Pointer(box r1.clone(), *m1)),
 					substitute(substitutions, &Pointer(box r2.clone(), *m2)),
@@ -471,7 +472,7 @@ fn unify(
 			if args1.len() != args2.len() {
 				push_err!(
 					errors,
-					vec![ origins.0, origins.1 ],
+					origins,
 					"there was a type mismatch between a `{}` and a `{}`, expected to be the same due to the following lines:",
 					Forall(args1.to_vec(), box substitute(substitutions, generic_t1)),
 					Forall(args2.to_vec(), box substitute(substitutions, generic_t2)),
@@ -491,7 +492,7 @@ fn unify(
 			if occurs_in(substitutions, *i, t) {
 				push_err!(
 					errors,
-					vec![ origins.0, origins.1 ],
+					origins,
 					"types `{}` and `{}`, expected to be the same due to the following lines, are recursive.",
 					substitute(substitutions, t),
 					Free(*i)
@@ -504,7 +505,7 @@ fn unify(
 		_ if t1 != t2 => {
 			push_err!(
 				errors,
-				vec![ origins.0, origins.1 ],
+				origins,
 				"there was a type mismatch between a{} `{}`, and a{} `{}`, expected to be of the same type due to the following lines:",
 				name_of(t1), substitute(substitutions, t1), name_of(t2), substitute(substitutions, t2)
 			);
@@ -555,10 +556,12 @@ pub fn annotate_helper<'a>(
 			let errors = &mut errors.lock().unwrap();
 			for g in generics {
 				if !env.iter().any(|stack| stack.iter().any(|t| t == g)) {
-					errors.insert(ErrorMessage {
-						msg: format!("the generic type {} was underconstrained, consider using a type annotation", e.r#type),
-						origins: vec![ e.loc ],
-					});
+					push_err!(
+						errors,
+						vec![ e.loc ],
+						"the generic type {} was underconstrained, consider using a type annotation",
+						e.r#type
+					);
 				}
 			}
 		}

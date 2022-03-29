@@ -34,7 +34,8 @@ use crate::{
 };
 
 use lazy_static::lazy_static;
-use std::collections::{HashMap, VecDeque, HashSet};
+use std::collections::{HashMap, VecDeque, HashSet, BTreeSet};
+use std::iter::FromIterator;
 use std::sync::Mutex;
 
 lazy_static! {
@@ -585,7 +586,7 @@ impl TokenStream {
 								r#type,
 							}
 						});
-					Struct(struct_args.into())
+					Struct(BTreeSet::from_iter(struct_args.into_iter()))
 				}
 
 				UnaryOp(Ref(_)) => {

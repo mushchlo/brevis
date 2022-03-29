@@ -164,7 +164,7 @@ impl Compilation {
 		type_name: Option<&str>
 	) -> String {
 		if !captured.is_empty() {
-			panic!("closures are not yet supported in C codegen.");
+			panic!("closures are not yet supported in C codegen, and {:#?} is a closure.", body);
 		}
 		let args_t =
 			args.iter()
@@ -351,8 +351,7 @@ impl Compilation {
 					);
 				}
 
-				Struct(mut s) => {
-					s.sort();
+				Struct(s) => {
 					let member_declarations = s.iter().fold("".to_string(), |acc, a|
 						format!("{}\n{};",
 							acc,
@@ -472,7 +471,7 @@ fn compile_trivial(tr: Expr) -> String {
 			v.name,
 		ExprVal::Var(v) =>
 			mk_id(&v.name),
-		_ => panic!("trivial is not trivial")
+		_ => panic!("{:#?} is not trivial", tr)
 	}
 }
 

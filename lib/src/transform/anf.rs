@@ -8,9 +8,7 @@ use crate::{
 		Expr,
 		ExprVal,
 		Pattern,
-	},
-	types::{
-		Type,
+		Literal,
 	},
 	lex::cradle::SourceLoc,
 };
@@ -23,63 +21,67 @@ fn unique_name() -> String {
 
 /// Reorders an expression in administrative normal form
 pub fn anfify(e: &mut Expr) {
-	use self::ExprVal::*;
-
-	let anfifier = |ex: &mut Expr| {
-		if let Call { args, func } = &mut ex.val {
-			let mut block = VecDeque::new();
-			let mut trivial_args = VecDeque::new();
-			for arg in args.iter_mut() {
-				trivial_args.push_back(match &arg.val {
-					Literal(_) | Var(_) => arg.clone(),
-
-					_ => {
-						let name = unique_name();
-						let cloned_arg_t = arg.r#type.clone();
-						let declared =
-							Pattern::Assignee(ast::Parameter {
-								name: name.clone(),
-								mutable: false,
-								// Zero values, as this variable doesn't exist in the source code.
-								name_loc: SourceLoc::nonexistent(),
-								type_loc: None,
-								r#type: arg.r#type.clone()
-							});
-						anfify(arg);
-						block.push_back(Expr {
-							val: Let { declared, def: box arg.clone() },
-							r#type: Type::Void,
-							loc: SourceLoc::nonexistent(),
-						});
-						Expr {
-							val: Var(ast::Variable {
-									name,
-									declaration_loc: SourceLoc::nonexistent(),
-									generics: HashMap::new(),
-							}),
-							loc: SourceLoc::nonexistent(),
-							r#type: cloned_arg_t,
-						}
+	fn anfifier(ex: &mut Expr) -> bool {
+		match &mut ex.val {
+			ExprVal::Call { args, func } if args.iter().any(|a| !is_trivial(a)) => {
+				let mut block = VecDeque::new();
+				for arg in args.iter_mut() {
+					let trivial_declaration = make_trivial(arg);
+					if let Some(declaration) = trivial_declaration {
+						block.push_back(declaration);
 					}
-				});
+				}
+
+				let val = ExprVal::Call {
+					args: args.clone(),
+					func: func.clone(),
+				};
+				block.push_back(
+					Expr {
+						val,
+						..ex.clone()
+					}
+				);
+				ex.val = ExprVal::Block(block);
 			}
 
-			anfify(func);
-			block.push_back(
-				Expr {
-					val: Call {
-						args: trivial_args,
-						func: func.clone(),
-					},
-					loc: SourceLoc::nonexistent(),
-					r#type: ex.r#type.clone()
-				}
-			);
-			ex.val = Block(block);
+			_ => {},
 		}
 
 		true
-	};
+	}
 
-	e.transform(anfifier, |_| {})
+	e.transform(anfifier, |_| {});
+}
+
+// Mutates e into an equivalent trivial expression,
+// and returns an optional declaration for it
+fn make_trivial(e: &mut Expr) -> Option<Expr> {
+	if is_trivial(e) {
+		return None;
+	}
+
+	let name = unique_name();
+	let r#type = e.r#type.clone();
+	let name_loc = SourceLoc::nonexistent();
+	let type_loc = None;
+
+	let mutable = false;
+	let declared = Pattern::Assignee(
+		ast::Parameter {
+			name: name.clone(), r#type, name_loc, type_loc, mutable
+		}
+	);
+	let def = box e.clone();
+	let declaration_loc = name_loc;
+	e.val = ExprVal::Var(ast::Variable {
+		name, declaration_loc, generics: HashMap::new()
+	});
+	let val = ExprVal::Let { declared, def };
+
+	Some(Expr { val, ..e.clone() })
+}
+
+fn is_trivial(e: &Expr) -> bool {
+	matches!(&e.val, ExprVal::Literal(Literal::AtomicLiteral(_)) | ExprVal::Var(_))
 }
